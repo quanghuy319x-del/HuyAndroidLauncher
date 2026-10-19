@@ -13,7 +13,7 @@ permissions:
 
 # Superseded commits do not need to consume 5 minutes of Gradle compilation.
 concurrency:
-  group: huy2-apk-${{ github.ref }}
+  group: huy2-apk-v2-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -47,15 +47,17 @@ jobs:
       - name: Restore incremental Android build outputs
         uses: actions/cache@v4
         with:
-          # Whole build tree includes Kotlin incremental state and generated
-          # outputs; gradle/actions/setup-gradle independently caches
-          # Gradle dependencies and relocatable Gradle task cache.
+          # Keep only small/valuable incremental compilation state. Caching
+          # the entire build/ tree caused huge cache transfers and queue delays.
+          # setup-gradle separately caches dependencies and the Gradle task cache.
           path: |
             upstream-lawnchair/.gradle
-            upstream-lawnchair/build
-          key: huy2-incremental-${{ runner.os }}-lawnchair16-${{ github.run_id }}-${{ github.run_attempt }}
+            upstream-lawnchair/build/kotlin
+            upstream-lawnchair/build/tmp/kotlin-classes
+            upstream-lawnchair/build/intermediates/javac
+          key: huy2-incremental-v2-${{ runner.os }}-lawnchair16-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            huy2-incremental-${{ runner.os }}-lawnchair16-
+            huy2-incremental-v2-${{ runner.os }}-lawnchair16-
 
       - name: Apply Launcher 2 folder blur and preview changes
         shell: bash
