@@ -137,6 +137,62 @@ change("AndroidManifest-common.xml",
        '    <uses-permission android:name="android.permission.ACCESS_RESTRICTED_SETTINGS" />',
        "")
 
+# Blur the home-screen icons and dock behind an open folder, without
+# blurring the folder contents. Works with classic and expressive animations.
+folder_source = "src/com/android/launcher3/folder/Folder.java"
+change(folder_source,
+       "import android.animation.AnimatorSet;",
+       "import android.animation.AnimatorSet;\nimport android.animation.ValueAnimator;")
+change(folder_source,
+       "import android.graphics.Rect;",
+       "import android.graphics.Rect;\nimport android.graphics.RenderEffect;\nimport android.graphics.Shader;")
+change(folder_source,
+       """        AnimatorSet animatorSet = getFolderAnimationManager()
+                .createAnimatorSet(/* isOpening */ true);""",
+       """        AnimatorSet animatorSet = getFolderAnimationManager()
+                .createAnimatorSet(/* isOpening */ true);
+        addHuyFolderBackgroundBlur(animatorSet, true);""")
+change(folder_source,
+       """        AnimatorSet animatorSet = getFolderAnimationManager()
+                .createAnimatorSet(/* isOpening */ false);""",
+       """        AnimatorSet animatorSet = getFolderAnimationManager()
+                .createAnimatorSet(/* isOpening */ false);
+        addHuyFolderBackgroundBlur(animatorSet, false);""")
+
+# RenderEffect is supported on Android 12+. Leave stock dimming untouched on
+# older Android. Reuse the launcher's blur targets instead of affecting folder UI.
+change(folder_source,
+       "    private void restoreLauncherAfterFolderDismissed() {",
+       """    /**
+     * Huy Launcher 2: background blur while a folder is open.
+     * The folder stays sharp; the workspace and dock blur together.
+     * closeComplete() already restores the targets after dismissal.
+     */
+    private void addHuyFolderBackgroundBlur(AnimatorSet folderAnimator, boolean isOpening) {
+        if (!Utilities.ATLEAST_S || !(mActivityContext instanceof Launcher launcher)) {
+            return;
+        }
+        if (launcher.getStateManager().getState().getDepth(launcher) != 0f) {
+            return; // Do not interfere with depth blur during state transitions.
+        }
+        final float radiusPx = 14f * getResources().getDisplayMetrics().density;
+        final ValueAnimator blur = ValueAnimator.ofFloat(
+                isOpening ? 0f : radiusPx, isOpening ? radiusPx : 0f);
+        blur.setDuration(isOpening ? 230 : 190);
+        blur.addUpdateListener(animation -> {
+            final float radius = (float) animation.getAnimatedValue();
+            final RenderEffect effect = radius < 0.5f
+                    ? null
+                    : RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP);
+            for (View target : launcher.getDepthBlurTargets()) {
+                target.setRenderEffect(effect);
+            }
+        });
+        folderAnimator.play(blur);
+    }
+
+    private void restoreLauncherAfterFolderDismissed() {""")
+
 change("build.gradle", 'applicationId "app.lawnchair.play"',
        'applicationId "app.huy.androidlauncher2"')
 # The first installed Launcher 2 is app.huy.androidlauncher2.debug and was signed
