@@ -138,11 +138,11 @@ change("AndroidManifest-common.xml",
        "")
 
 change("build.gradle", 'applicationId "app.lawnchair.play"',
-       'applicationId "app.huy.androidlauncher2"')
+       'applicationId "app.huy.androidlauncher2.preview"')
 change("build.gradle", 'resValue("string", "derived_app_name", "Lawnchair (Debug)")',
        'resValue("string", "derived_app_name", "Huy android launcher 2")')
 change("build.gradle", 'resValue("string", "derived_app_name", "Lawnchair")',
        'resValue("string", "derived_app_name", "Huy android launcher 2")')
 
 print("Ready to build: ./gradlew assembleLawnWithQuickstepPlayDebug")
-print("Expected package: app.huy.androidlauncher2.debug")
+print("Expected package: app.huy.androidlauncher2.preview.debug")
