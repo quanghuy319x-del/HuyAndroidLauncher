@@ -29,7 +29,7 @@ change(layout,
        "public static final int MAX_NUM_ITEMS_IN_PREVIEW = 9;")
 
 # Preserve Lawnchair's 1-4 icon positions. For 5-9, use three equally spaced
-# rows/columns with 17% outer padding and smaller icons, as in iOS folder previews.
+# rows/columns with 17% outer padding and larger, non-overlapping icons, as in iOS folder previews.
 # The rounded/circular corners must be respected, not merely the square bounds.
 change(layout,
        "        // The case of two items is homomorphic to the case of one.\n",
@@ -61,7 +61,7 @@ change(layout,
         } else {
             scale = MIN_SCALE;""",
        """        } else if (numItems > 4) {
-            scale = 0.18f; // Smaller icons with safe gaps and rounded-corner clearance.
+            scale = 0.22f; // 22% larger: 3-per-row, within the rounded folder outline.
         } else if (numItems <= 3) {
             scale = MAX_SCALE;
         } else {
@@ -97,11 +97,58 @@ change("src/com/android/launcher3/folder/PreviewItemManager.java",
 # a circle of radius 0.45*previewSize, leaving room for a folder border.
 import math
 inset = 0.17
-icon_width = 0.18
+icon_width = 0.22
 cell = (1 - 2 * inset) / 3
 outer = inset + 0.5 * cell - 0.5 * icon_width
 assert cell > icon_width, "3x3 icons overlap"
 assert math.hypot(0.5 - outer, 0.5 - outer) < 0.45, "3x3 corner icons are too large"
+
+# Translucent glass background on CLOSED folder previews: a gentle
+# two-stop highlight, consistent 1dp rim, and the original selected folder
+# shape. Icons and clipping remain unchanged.
+change("src/com/android/launcher3/folder/PreviewBackground.java",
+       "import android.graphics.Matrix;",
+       "import android.graphics.Matrix;\nimport android.graphics.LinearGradient;")
+change("src/com/android/launcher3/folder/PreviewBackground.java",
+       """        mPaint.setColor(getBgColor());
+
+        getShape().drawShape(canvas, getOffsetX(), getOffsetY(), getScaledRadius(), mPaint);
+        drawShadow(canvas);""",
+       """        final float top = getOffsetY();
+        final float bottom = top + getScaledRadius() * 2f;
+        mPaint.setColor(Color.WHITE);
+        mPaint.setShader(new LinearGradient(0f, top, 0f, bottom,
+                Color.argb(205, 255, 255, 255),
+                Color.argb(125, 232, 241, 251), Shader.TileMode.CLAMP));
+        getShape().drawShape(canvas, getOffsetX(), getOffsetY(), getScaledRadius(), mPaint);
+        mPaint.setShader(null);
+        mPaint.setStyle(Paint.Style.STROKE);
+        mPaint.setStrokeWidth(Math.max(1f, mStrokeWidth));
+        mPaint.setColor(Color.argb(190, 255, 255, 255));
+        getShape().drawShape(canvas, getOffsetX() + mStrokeWidth,
+                getOffsetY() + mStrokeWidth,
+                getScaledRadius() - mStrokeWidth, mPaint);
+        mPaint.setStyle(Paint.Style.FILL);
+        drawShadow(canvas);""")
+
+# The OPEN folder uses a semi-transparent glass panel instead of opaque cream.
+# Both animation implementations must preserve the translucent end color.
+folderGlassColor = "Color.argb(206, 247, 250, 255)"
+change("src/com/android/launcher3/folder/Folder.java",
+       """        mBackground.setColor(LawnchairUtilsKt.resolveFolderBackgroundColor(getContext()));
+        var alpha = LawnchairUtilsKt.getFolderBackgroundAlpha(getContext());
+        mBackground.setAlpha(alpha);""",
+       """        mBackground.setColor(Color.argb(206, 247, 250, 255));
+        mBackground.setAlpha(255);
+        mBackground.setStroke(Math.max(1,
+                Math.round(getResources().getDisplayMetrics().density)),
+                Color.argb(180, 255, 255, 255));""")
+change("src/com/android/launcher3/folder/FolderAnimationManager.java",
+       "int finalColor = LawnchairUtilsKt.resolveFolderBackgroundColor(mContext);",
+       "int finalColor = Color.argb(206, 247, 250, 255);")
+change("src/com/android/launcher3/folder/FolderSpringAnimatorSet.kt",
+       "val finalColor = app.lawnchair.util.resolveFolderBackgroundColor(context)",
+       "val finalColor = Color.argb(206, 247, 250, 255)")
 
 change(organizer, "private static final int PREVIEW_MAX_ROWS = 2;",
        "private static final int PREVIEW_MAX_ROWS = 3;")
@@ -280,7 +327,7 @@ change(folder_source,
     }
 
     /**
-     * iOS-like uniform backdrop: wallpaper blurred via Lawnchair's native
+     * Uniform backdrop: wallpaper blurred via Lawnchair's native
      * DepthController (when Android supports it), workspace/dock blurred with
      * RenderEffect, and the SAME gentle dark overlay over the entire screen.
      * The opened folder is drawn above the overlay and stays sharp.
@@ -293,15 +340,19 @@ change(folder_source,
             return;
         }
         ensureHuyFolderOverlay(launcher);
-        final float maxRadius = 14f * getResources().getDisplayMetrics().density;
+        final float maxRadius = 8f * getResources().getDisplayMetrics().density;
         final ValueAnimator blur = ValueAnimator.ofFloat(
                 isOpening ? 0f : 1f, isOpening ? 1f : 0f);
         blur.setDuration(isOpening ? 220 : 180);
         blur.addUpdateListener(animation -> {
             final float progress = (float) animation.getAnimatedValue();
             // Blur wallpaper underneath the window, not just individual widgets.
-            launcher.setHuyFolderWallpaperBlur(0.32f * progress);
-            final float radius = maxRadius * progress;
+            // Native wallpaper blur may be disabled by Android, power saving,
+            // or the wallpaper compositor. Never blur just widgets heavily
+            // when the wallpaper remains clear.
+            final boolean wallpaperBlurActive =
+                    launcher.setHuyFolderWallpaperBlur(0.32f * progress);
+            final float radius = wallpaperBlurActive ? maxRadius * progress : 0f;
             final RenderEffect effect = radius < 0.5f ? null
                     : RenderEffect.createBlurEffect(
                             radius, radius, Shader.TileMode.CLAMP);
@@ -309,7 +360,7 @@ change(folder_source,
                 target.setRenderEffect(effect);
             }
             if (mHuyUniformFolderOverlay != null) {
-                mHuyUniformFolderOverlay.setAlpha(0.17f * progress);
+                mHuyUniformFolderOverlay.setAlpha((wallpaperBlurActive ? 0.18f : 0.35f) * progress);
             }
         });
         folderAnimator.play(blur);
