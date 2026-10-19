@@ -424,6 +424,16 @@ change(folder_source,
     private static int sHuyCacheWidth, sHuyCacheHeight;
     private static boolean sHuyWarmupScheduled;
 
+    /**
+     * Extend the backdrop image past all four edges before applying blur.
+     * Without overscan RenderEffect clips its output at the ImageView edge:
+     * the middle looks blurred but 20-80px strips near the screen remain sharp.
+     */
+    private int getHuyBackdropOverscanPx() {
+        return Math.max(48, (int) Math.ceil(
+                50f * getResources().getDisplayMetrics().density));
+    }
+
     /** One even overlay over wallpaper, widgets, dock and icons; below folder. */
     private void ensureHuyFolderOverlay(Launcher launcher) {
         final BaseDragLayer dragLayer = mActivityContext.getDragLayer();
@@ -436,11 +446,18 @@ change(folder_source,
                     View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         }
         if (mHuyUniformFolderOverlay.getParent() == null && getParent() == dragLayer) {
-            dragLayer.addView(mHuyUniformFolderOverlay,
-                    dragLayer.indexOfChild(this),
+            final int overscan = getHuyBackdropOverscanPx();
+            final BaseDragLayer.LayoutParams backdropLp =
                     new BaseDragLayer.LayoutParams(
-                            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                            android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+                            dragLayer.getWidth() + overscan * 2,
+                            dragLayer.getHeight() + overscan * 2);
+            backdropLp.gravity = android.view.Gravity.TOP | android.view.Gravity.LEFT;
+            backdropLp.leftMargin = -overscan;
+            backdropLp.topMargin = -overscan;
+            dragLayer.addView(mHuyUniformFolderOverlay,
+                    dragLayer.indexOfChild(this), backdropLp);
+            // Overscan stays outside visible root view; the blurred backdrop
+            // covers right up to the parent's left/right/top/bottom edges.
             // The open folder stays sharp above the full-screen overlay.
             dragLayer.bringChildToFront(this);
         }
@@ -530,19 +547,34 @@ change(folder_source,
             if (source == null) {
                 return false;
             }
-            screenshot = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            final int overscan = getHuyBackdropOverscanPx();
+            screenshot = Bitmap.createBitmap(
+                    w + overscan * 2, h + overscan * 2, Bitmap.Config.ARGB_8888);
             final Canvas canvas = new Canvas(screenshot);
             final Paint p = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
-            // Center crop selected source image, matching the home-screen scale
-            // for a single static wallpaper. A scrolling wallpaper can differ
-            // slightly at the edges until proper offset calibration is added.
+            // Use the original center crop for the visible screen, but extend
+            // pixels beyond its bounds with CLAMP. This fills blur sampling
+            // margins with actual wallpaper instead of transparent black.
             final float scale = Math.max(w / (float) source.getWidth(),
                     h / (float) source.getHeight());
             final float sw = source.getWidth() * scale;
             final float sh = source.getHeight() * scale;
-            canvas.drawBitmap(source, null,
-                    new android.graphics.RectF((w - sw) / 2f, (h - sh) / 2f,
-                            (w + sw) / 2f, (h + sh) / 2f), p);
+            final android.graphics.BitmapShader wallpaperShader =
+                    new android.graphics.BitmapShader(source,
+                            Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+            final android.graphics.Matrix wallpaperMatrix =
+                    new android.graphics.Matrix();
+            wallpaperMatrix.setScale(scale, scale);
+            wallpaperMatrix.postTranslate(
+                    overscan + (w - sw) / 2f, overscan + (h - sh) / 2f);
+            wallpaperShader.setLocalMatrix(wallpaperMatrix);
+            p.setShader(wallpaperShader);
+            canvas.drawRect(0f, 0f,
+                    w + overscan * 2f, h + overscan * 2f, p);
+            p.setShader(null);
+            // Draw launcher-owned views into the central screen-sized region.
+            canvas.save();
+            canvas.translate(overscan, overscan);
 
             // Draw launcher-owned views on top of the image BEFORE blurring.
             // Capturing only the workspace misses the wallpaper, while
@@ -566,6 +598,7 @@ change(folder_source,
                     canvas.restore();
                 }
             }
+            canvas.restore();
 
             imageView.setBackgroundColor(Color.TRANSPARENT);
             imageView.setScaleType(ImageView.ScaleType.FIT_XY);
