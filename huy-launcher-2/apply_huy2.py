@@ -381,6 +381,24 @@ change(folder_source,
        "import android.view.View;",
        "import android.view.View;\nimport android.graphics.Color;")
 
+# Real pixel blur fallback: once the user chooses the wallpaper image in
+# Folder settings, composite that wallpaper with the actual current launcher
+# workspace and dock (including widgets), then apply ONE RenderEffect to the
+# whole composite. Unlike SurfaceControl cross-window blur, this also works
+# when battery saver / Pixel 5 disables native wallpaper blur.
+change(folder_source,
+       "import android.graphics.RenderEffect;",
+       """import android.graphics.RenderEffect;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Paint;""")
+change(folder_source,
+       "import android.graphics.Color;",
+       """import android.graphics.Color;
+import android.widget.ImageView;
+import java.io.File;""")
+
 change(folder_source,
        """        AnimatorSet animatorSet = getFolderAnimationManager()
                 .createAnimatorSet(/* isOpening */ true);""",
@@ -397,12 +415,14 @@ change(folder_source,
 change(folder_source,
        "    private void restoreLauncherAfterFolderDismissed() {",
        """    private View mHuyUniformFolderOverlay;
+    private Bitmap mHuyBackdropBitmap;
+    private boolean mHuyHasBackdropSnapshot;
 
     /** One even overlay over wallpaper, widgets, dock and icons; below folder. */
     private void ensureHuyFolderOverlay(Launcher launcher) {
         final BaseDragLayer dragLayer = mActivityContext.getDragLayer();
         if (mHuyUniformFolderOverlay == null) {
-            mHuyUniformFolderOverlay = new View(getContext());
+            mHuyUniformFolderOverlay = new ImageView(getContext());
             mHuyUniformFolderOverlay.setBackgroundColor(Color.rgb(91, 108, 122));
             mHuyUniformFolderOverlay.setAlpha(0f);
             mHuyUniformFolderOverlay.setClickable(false);
@@ -418,7 +438,106 @@ change(folder_source,
             // The open folder stays sharp above the full-screen overlay.
             dragLayer.bringChildToFront(this);
         }
+        // Recreate the blurred screenshot at each folder open. A user-selected
+        // wallpaper image is required because Android 14 denies wallpaper reads
+        // to a normal launcher. The screenshot includes widgets, icons and dock.
+        mHuyHasBackdropSnapshot = createHuyFolderSnapshot(launcher, dragLayer);
     }
+
+    private boolean createHuyFolderSnapshot(Launcher launcher, BaseDragLayer dragLayer) {
+        if (!(mHuyUniformFolderOverlay instanceof ImageView imageView)) {
+            return false;
+        }
+        final File imageFile = new File(launcher.getFilesDir(),
+                "huy_folder_wallpaper.image");
+        if (!imageFile.isFile()) {
+            return false;
+        }
+        final int w = dragLayer.getWidth(), h = dragLayer.getHeight();
+        if (w < 100 || h < 100) {
+            return false;
+        }
+        Bitmap source = null;
+        Bitmap screenshot = null;
+        try {
+            final BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(imageFile.getAbsolutePath(), bounds);
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                return false;
+            }
+            final BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inPreferredConfig = Bitmap.Config.RGB_565;
+            int sample = 1;
+            while (bounds.outWidth / (sample * 2) >= w
+                    && bounds.outHeight / (sample * 2) >= h) {
+                sample *= 2;
+            }
+            opts.inSampleSize = sample;
+            source = BitmapFactory.decodeFile(imageFile.getAbsolutePath(), opts);
+            if (source == null) {
+                return false;
+            }
+            screenshot = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            final Canvas canvas = new Canvas(screenshot);
+            final Paint p = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
+            // Center crop selected source image, matching the home-screen scale
+            // for a single static wallpaper. A scrolling wallpaper can differ
+            // slightly at the edges until proper offset calibration is added.
+            final float scale = Math.max(w / (float) source.getWidth(),
+                    h / (float) source.getHeight());
+            final float sw = source.getWidth() * scale;
+            final float sh = source.getHeight() * scale;
+            canvas.drawBitmap(source, null,
+                    new android.graphics.RectF((w - sw) / 2f, (h - sh) / 2f,
+                            (w + sw) / 2f, (h + sh) / 2f), p);
+
+            // Draw launcher-owned views on top of the image BEFORE blurring.
+            // Capturing only the workspace misses the wallpaper, while
+            // blurring only the wallpaper misses widgets and dock.
+            final int[] dragPos = new int[2];
+            final int[] targetPos = new int[2];
+            dragLayer.getLocationInWindow(dragPos);
+            for (View target : launcher.getDepthBlurTargets()) {
+                if (target == null || target.getWidth() == 0 || target.getHeight() == 0) {
+                    continue;
+                }
+                canvas.save();
+                try {
+                    target.getLocationInWindow(targetPos);
+                    canvas.translate(targetPos[0] - dragPos[0],
+                            targetPos[1] - dragPos[1]);
+                    target.draw(canvas);
+                } catch (Throwable itemError) {
+                    Log.w(TAG, "Could not snapshot background layer", itemError);
+                } finally {
+                    canvas.restore();
+                }
+            }
+
+            imageView.setBackgroundColor(Color.TRANSPARENT);
+            imageView.setScaleType(ImageView.ScaleType.FIT_XY);
+            imageView.setImageBitmap(screenshot);
+            final float blurPx = 25f * getResources().getDisplayMetrics().density;
+            imageView.setRenderEffect(RenderEffect.createBlurEffect(
+                    blurPx, blurPx, Shader.TileMode.CLAMP));
+            if (mHuyBackdropBitmap != null) {
+                mHuyBackdropBitmap.recycle();
+            }
+            mHuyBackdropBitmap = screenshot;
+            screenshot = null;
+            return true;
+        } catch (Throwable error) {
+            Log.w(TAG, "Could not create full folder backdrop snapshot", error);
+            return false;
+        } finally {
+            if (source != null) {
+                source.recycle();
+            }
+            if (screenshot != null) {
+                screenshot.recycle();
+            }
+        }
 
     /**
      * Uniform backdrop: wallpaper blurred via Lawnchair's native
@@ -439,6 +558,16 @@ change(folder_source,
         blur.setDuration(isOpening ? 220 : 180);
         blur.addUpdateListener(animation -> {
             final float progress = (float) animation.getAnimatedValue();
+            if (mHuyHasBackdropSnapshot) {
+                // This is a real, uniform snapshot blur. No OS cross-window
+                // blur is necessary; keep original targets untouched.
+                launcher.setHuyFolderWallpaperBlur(0f);
+                for (View target : launcher.getDepthBlurTargets()) {
+                    target.setRenderEffect(null);
+                }
+                mHuyUniformFolderOverlay.setAlpha(progress);
+                return;
+            }
             // Blur wallpaper underneath the window, not just individual widgets.
             // Native wallpaper blur may be disabled by Android, power saving,
             // or the wallpaper compositor. Never blur just widgets heavily
@@ -469,6 +598,15 @@ change(folder_source,
        """        launcher.setHuyFolderWallpaperBlur(0f);
         if (mHuyUniformFolderOverlay != null) {
             mHuyUniformFolderOverlay.setAlpha(0f);
+            if (mHuyUniformFolderOverlay instanceof ImageView image) {
+                image.setImageDrawable(null);
+                image.setRenderEffect(null);
+            }
+            if (mHuyBackdropBitmap != null) {
+                mHuyBackdropBitmap.recycle();
+                mHuyBackdropBitmap = null;
+            }
+            mHuyHasBackdropSnapshot = false;
             if (mHuyUniformFolderOverlay.getParent() instanceof
                     android.view.ViewGroup group) {
                 group.removeView(mHuyUniformFolderOverlay);
