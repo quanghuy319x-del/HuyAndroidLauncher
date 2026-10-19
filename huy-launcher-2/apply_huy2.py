@@ -356,8 +356,8 @@ change("quickstep/src/com/android/quickstep/util/BaseDepthController.java",
     protected boolean mHuyFolderBlurVisible;""")
 change("quickstep/src/com/android/quickstep/util/BaseDepthController.java",
        "        if (windowToken != null && Utilities.ATLEAST_R) {",
-       "        if (windowToken != null && Utilities.ATLEAST_R
-                && !mHuySkipWallpaperZoomForFolder && !mHuyFolderBlurVisible) {")
+       """        if (windowToken != null && Utilities.ATLEAST_R
+                && !mHuySkipWallpaperZoomForFolder && !mHuyFolderBlurVisible) {""")
 
 # The public widgetDepth multiproperty is used for workspace/recents transitions.
 # Reuse that existing wallpaper-surface blur path for folders rather than relying
