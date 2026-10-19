@@ -137,6 +137,47 @@ change("AndroidManifest-common.xml",
        '    <uses-permission android:name="android.permission.ACCESS_RESTRICTED_SETTINGS" />',
        "")
 
+# Huy Launcher 2: soft glass capsule BEHIND dock icons, without moving,
+# reordering, or changing existing dock icons or folders. Frosted look uses a
+# translucent light/dark gradient, fine light border and subtle elevation.
+# Avoid blurring individual widgets (which caused the patchy blur screenshot).
+change("src/com/android/launcher3/Hotseat.java",
+       "import android.graphics.Color;",
+       "import android.graphics.Color;\nimport android.content.res.Configuration;")
+change("src/com/android/launcher3/Hotseat.java",
+       """    private void setUpBackground() {
+        if(!preferenceManager.getHotseatBG().get()) return;""",
+       """    private void setUpBackground() {
+        // Glass dock is enabled by default in Huy Launcher 2. Only the
+        // icon grid's background is changed; layout, drop targets and
+        // touch handling stay exactly as in stock Lawnchair.
+        final float density = getResources().getDisplayMetrics().density;
+        final boolean night = (getResources().getConfiguration().uiMode
+                & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        final int[] gradient = night
+                ? new int[]{Color.argb(105, 245, 247, 255),
+                            Color.argb(65, 210, 222, 240)}
+                : new int[]{Color.argb(145, 255, 255, 255),
+                            Color.argb(83, 245, 250, 255)};
+        GradientDrawable glass = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM, gradient);
+        glass.setCornerRadius(32f * density);
+        glass.setStroke(Math.max(1, Math.round(density)),
+                Color.argb(night ? 125 : 170, 255, 255, 255));
+        mIconsContainer.setBackground(new InsetDrawable(glass,
+                Math.round(14f * density), Math.round(2f * density),
+                Math.round(14f * density), Math.round(3f * density)));
+        mIconsContainer.setElevation(2f * density);
+        // This new glass preset takes precedence over the legacy solid dock
+        // background so there is no opaque box hiding the translucent effect.
+        setBackground(null);
+    }
+
+    private void setUpOldBackground() {
+        if(!preferenceManager.getHotseatBG().get()) return;""")
+# Explicitly handle orientation change; portrait dock stays glass, vertical
+# docks retain the existing container without extra overlays.
+
 # One uniform folder backdrop. This removes FLAG_BLUR_BEHIND: that API blurred
 # only patches on Pixel 5 (sharp wallpaper + extremely blurred widgets).
 # Instead ask Lawnchair's own DepthController to blur the wallpaper surface,
