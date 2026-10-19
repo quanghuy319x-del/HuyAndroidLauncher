@@ -351,10 +351,13 @@ change("quickstep/src/com/android/quickstep/util/BaseDepthController.java",
        "    protected boolean mPauseBlurs;",
        """    protected boolean mPauseBlurs;
     /** Keep the wallpaper at its original size during folder-only backdrop blur. */
-    protected boolean mHuySkipWallpaperZoomForFolder;""")
+    protected boolean mHuySkipWallpaperZoomForFolder;
+    /** Also block unexpected depth callbacks throughout the open folder. */
+    protected boolean mHuyFolderBlurVisible;""")
 change("quickstep/src/com/android/quickstep/util/BaseDepthController.java",
        "        if (windowToken != null && Utilities.ATLEAST_R) {",
-       "        if (windowToken != null && Utilities.ATLEAST_R && !mHuySkipWallpaperZoomForFolder) {")
+       "        if (windowToken != null && Utilities.ATLEAST_R
+                && !mHuySkipWallpaperZoomForFolder && !mHuyFolderBlurVisible) {")
 
 # The public widgetDepth multiproperty is used for workspace/recents transitions.
 # Reuse that existing wallpaper-surface blur path for folders rather than relying
@@ -376,6 +379,7 @@ change("quickstep/src/com/android/launcher3/statehandlers/DepthController.java",
             // Suppress wallpaper zoom during both depth property callbacks
             // and the forced native blur apply. No zoom-out on folder opening.
             mHuySkipWallpaperZoomForFolder = true;
+            mHuyFolderBlurVisible = fraction > 0f;
             try {
                 widgetDepth.setValue(Math.max(0f, Math.min(0.32f, fraction)));
                 // The user may have disabled Lawnchair's normal depth preference;
