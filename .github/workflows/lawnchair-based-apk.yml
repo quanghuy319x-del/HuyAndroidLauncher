@@ -28,12 +28,12 @@ jobs:
         with:
           distribution: zulu
           java-version: '21'
-      - name: Prepare Android SDK
-        uses: android-actions/setup-android@v3
       - name: Install Android SDK platform for Lawnchair
         run: |
-          sdkmanager --licenses < /dev/null > /dev/null || true
-          sdkmanager 'platforms;android-37' 'build-tools;36.0.0' || true
+          echo "SDK installed at $ANDROID_HOME"
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)
+          test -n "$SDKMANAGER"
+          "$SDKMANAGER" 'platforms;android-37' 'build-tools;36.0.0'
       - name: Setup Gradle cache
         uses: gradle/actions/setup-gradle@v4
       - name: Compile official Lawnchair engine with custom patch
