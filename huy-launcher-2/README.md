@@ -4,6 +4,7 @@
 
 - Official Lawnchair 16 development source pinned to `fc100ae9095a83b8b51c447a3b0a4ce2b399ad59`.
 - Folder icon preview: 3x3, smaller icons, 17% edge inset, themed-shape clipping.
+- Opening a folder animates a 14dp Android 12+ RenderEffect blur behind it (workspace and dock); the open folder stays sharp. The effect clears on close or dismissal, with stock behavior on older Android.
 - No AccessibilityService/NotificationListener service declarations or `ACCESS_RESTRICTED_SETTINGS` permission, matching the user's Play Protect-tested launcher.
 - **Permanent final application ID:** `app.huy.androidlauncher2`.
 - **Permanent signing certificate SHA-256:** `36758c6fe2a6cee38c81f2b42f868119b29a5f173e8015cb03ab440c467751d0`.
