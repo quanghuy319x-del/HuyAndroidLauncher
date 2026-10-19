@@ -58,8 +58,9 @@ jobs:
           f.write_text(s)
           PY
           git -C upstream-lawnchair diff --check
-          grep -q 'WindowManager.LayoutParams.FLAG_BLUR_BEHIND' upstream-lawnchair/src/com/android/launcher3/folder/Folder.java
-          grep -q 'setBlurBehindRadius' upstream-lawnchair/src/com/android/launcher3/folder/Folder.java
+          grep -q 'setHuyFolderWallpaperBlur' upstream-lawnchair/src/com/android/launcher3/folder/Folder.java
+          grep -q 'setHuyFolderDepth' upstream-lawnchair/quickstep/src/com/android/launcher3/statehandlers/DepthController.java
+          grep -q 'mHuyUniformFolderOverlay' upstream-lawnchair/src/com/android/launcher3/folder/Folder.java
       - name: Compile with official Android Gradle Plugin
         shell: bash
         working-directory: upstream-lawnchair
