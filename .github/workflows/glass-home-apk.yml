@@ -18,8 +18,10 @@ jobs:
           mkdir -p glass-home-launcher/project
           tar -xJf glass-home-launcher/source.tar.xz -C glass-home-launcher/project
           test -f glass-home-launcher/project/app/src/main/java/dev/glasshome/launcher/MainActivity.java
-      - name: Apply Pixel Home v5 interaction upgrades
+      - name: Apply Pixel Home v5 base upgrades
         run: python3 glass-home-launcher/upgrade-to-v5.py glass-home-launcher/project
+      - name: Apply Pixel Home v6 layout and dock upgrades
+        run: python3 glass-home-launcher/upgrade-to-v6.py glass-home-launcher/project
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -38,13 +40,13 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: PixelHome-v5-debug-apk
+          name: PixelHome-v6-debug-apk
           path: glass-home-launcher/project/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
       - name: Upload editable source and preview
         uses: actions/upload-artifact@v4
         with:
-          name: PixelHome-v5-source-preview
+          name: PixelHome-v6-source-preview
           path: |
             glass-home-launcher/project/PREVIEW.html
             glass-home-launcher/project/README.md
