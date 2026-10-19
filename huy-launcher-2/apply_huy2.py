@@ -28,12 +28,11 @@ change(layout,
        "public static final int MAX_NUM_ITEMS_IN_PREVIEW = 4;",
        "public static final int MAX_NUM_ITEMS_IN_PREVIEW = 9;")
 
-# Preserve Lawnchair's 1-4 icon positions. For 5-9, use three equally spaced
-# rows/columns with an iOS-like 8% grid inset and 23%-width icons.
-# The rounded/circular corners must be respected, not merely the square bounds.
+# Use one fixed iOS-style 3x3 grid for EVERY folder size (1 through 9+).
+# Small folders fill slots from the top-left, never inflate or center 1-4 icons.
 change(layout,
        "        // The case of two items is homomorphic to the case of one.\n",
-       """        if (curNumItems > 4 && index >= 0) {
+       """        if (index >= 0 && index < MAX_NUM_ITEMS_IN_PREVIEW) {
             final float inset = mAvailableSpace * 0.08f;
             final float cellSize = (mAvailableSpace - inset * 2f) / 3f;
             final float drawnSize = mIconSize * scaleForItem(curNumItems, 0);
@@ -54,22 +53,18 @@ change(layout,
        "        } else if (numItems == MAX_NUM_ITEMS_IN_PREVIEW) {",
        "        } else if (numItems == 4) {")
 
-# Use small 3-across previews without changing the size for 1-4.
+# Fixed preview size for any number of items, including 1/2/3/4.
 change(layout,
        """        } else if (numItems <= 3) {
             scale = MAX_SCALE;
         } else {
             scale = MIN_SCALE;""",
-       """        } else if (numItems > 4) {
-            scale = 0.23f; // Each mini-icon occupies 23% of folder width.
-        } else if (numItems <= 3) {
-            scale = MAX_SCALE;
-        } else {
-            scale = MIN_SCALE;""")
+       """        } else {
+            scale = 0.23f; // Same size for 1, 2, ... 9 or more items.
+        }""")
 
-# Keep 3x3 icons strictly inside the actual themed folder background.
-# The default clip path is deliberately oversized for Lawnchair's old overlap
-# effect; use a tighter, shape-aware path only for 5-9 icon previews.
+# Keep ALL 3x3 mini-icons inside the folder border, even for 1-4 apps.
+# The original Lawnchair clip path intentionally allows icons to overflow.
 change("src/com/android/launcher3/folder/PreviewBackground.java",
        "    public Path getClipPath() {",
        """    public Path getInnerPreviewClipPath() {
@@ -86,7 +81,7 @@ change("src/com/android/launcher3/folder/PreviewItemManager.java",
        """        Path clipPath = bg.getClipPath();
         PointF firstPageOffset = new PointF(bg.basePreviewOffsetX, bg.basePreviewOffsetY);
         drawParams(canvas, mFirstPageParams, firstPageOffset, /* shouldClipPath */ false, clipPath);""",
-       """        boolean isThreeByThreePreview = mFirstPageParams.size() > 4;
+       """        boolean isThreeByThreePreview = !mFirstPageParams.isEmpty();
         Path clipPath = isThreeByThreePreview
                 ? bg.getInnerPreviewClipPath() : bg.getClipPath();
         PointF firstPageOffset = new PointF(bg.basePreviewOffsetX, bg.basePreviewOffsetY);
@@ -152,6 +147,27 @@ change("src/com/android/launcher3/folder/FolderSpringAnimatorSet.kt",
        "val finalColor = app.lawnchair.util.resolveFolderBackgroundColor(context)",
        "val finalColor = Color.argb(206, 247, 250, 255)")
 
+# Lawnchair's helper initially calculates 2x2 grid spacing from items 0
+# and 3. For our 3x3 position logic, items 0 and 4 are diagonal neighbours.
+# This also fixes the destination of icons entering/leaving a small folder.
+change(layout,
+       "        getPosition(3, 4, result);",
+       "        getPosition(4, 4, result);")
+
+# Apply exactly the same 3x3 size even when page > 0; drag animations
+# don't cause tiny folders to temporarily switch to larger 2x2 icons.
+change(layout,
+       """        if (page > 0) {
+            scale = MIN_SCALE;
+        } else if (numItems <= 3) {
+            scale = MAX_SCALE;
+        } else {
+            scale = MIN_SCALE;
+        }
+        return scale * mBaselineIconScale;""",
+       """        scale = 0.23f;
+        return scale * mBaselineIconScale;""")
+
 change(organizer, "private static final int PREVIEW_MAX_ROWS = 2;",
        "private static final int PREVIEW_MAX_ROWS = 3;")
 change(organizer, "private static final int PREVIEW_MAX_COLUMNS = 2;",
@@ -213,9 +229,15 @@ change("src/com/android/launcher3/Hotseat.java",
         glass.setCornerRadius(32f * density);
         glass.setStroke(Math.max(1, Math.round(density)),
                 Color.argb(night ? 125 : 170, 255, 255, 255));
+        // Stretch the pill to fit the widest supported dock grid. In particular,
+        // a 6-icon dock must not spill out of the background at either end.
+        // Negative insets expand only the drawable (not the icon hit boxes).
+        final int slots = mActivity.getDeviceProfile().numShownHotseatIcons;
+        final int horizontalGlassInset = Math.round(
+                (slots >= 6 ? -12f : slots >= 5 ? -7f : -2f) * density);
         mIconsContainer.setBackground(new InsetDrawable(glass,
-                Math.round(14f * density), Math.round(2f * density),
-                Math.round(14f * density), Math.round(3f * density)));
+                horizontalGlassInset, Math.round(1f * density),
+                horizontalGlassInset, Math.round(1f * density)));
         mIconsContainer.setElevation(2f * density);
         // This new glass preset takes precedence over the legacy solid dock
         // background so there is no opaque box hiding the translucent effect.
