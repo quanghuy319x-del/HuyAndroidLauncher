@@ -20,6 +20,11 @@ jobs:
           test -f glass-home-launcher/project/app/src/main/java/dev/glasshome/launcher/MainActivity.java
       - name: Apply Pixel Home v5 base upgrades
         run: python3 glass-home-launcher/upgrade-to-v5.py glass-home-launcher/project
+      - name: Upload intermediate source for v6 compatibility verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: pixelhome-v5-generated-java
+          path: glass-home-launcher/project/app/src/main/java/dev/glasshome/launcher/MainActivity.java
       - name: Apply Pixel Home v6 layout and dock upgrades
         run: python3 glass-home-launcher/upgrade-to-v6.py glass-home-launcher/project
       - uses: actions/setup-java@v4
