@@ -416,6 +416,126 @@ replace('                    home.clear(); dock.clear();',
 replace('                    for(String id:installed.keySet()) home.add(new Item(id));',
         '                    for(String id:installed.keySet()) if(!hiddenApps.contains(id)) home.add(new Item(id));')
 
+
+# Export/import the whole layout and launcher settings to Android's file picker.
+# This does not claim to restore widget binding tokens after an uninstall.
+replace('private static final int REQUEST_CONFIG_WIDGET = 713;',
+'''private static final int REQUEST_CONFIG_WIDGET = 713;
+    private static final int REQUEST_EXPORT = 784, REQUEST_IMPORT = 785;''')
+replace('''        super.onActivityResult(requestCode,resultCode,data);
+        if(requestCode!=REQUEST_BIND_WIDGET && requestCode!=REQUEST_CONFIG_WIDGET)return;''',
+'''        super.onActivityResult(requestCode,resultCode,data);
+        if(requestCode==REQUEST_EXPORT && resultCode==RESULT_OK && data!=null) {
+            writeBackup(data.getData()); return;
+        }
+        if(requestCode==REQUEST_IMPORT && resultCode==RESULT_OK && data!=null) {
+            readBackup(data.getData()); return;
+        }
+        if(requestCode!=REQUEST_BIND_WIDGET && requestCode!=REQUEST_CONFIG_WIDGET)return;''')
+
+replace('"Widgets","Hidden apps","Default Home app","Reset layout"',
+        '"Widgets","Hidden apps","Backup & restore","Default Home app","Reset layout"')
+replace('''                case 7: openHomeSettings();break;
+                case 8: confirmResetLayout();break;''',
+'''                case 7: showBackupOptions();break;
+                case 8: openHomeSettings();break;
+                case 9: confirmResetLayout();break;''')
+replace('    private void showSettings() {','''    private void showBackupOptions() {
+        showActionSheet("Backup & restore",new String[]{
+            "Export layout & settings","Import layout & settings","About safe upgrades"
+        },i->{
+            if(i==0) {
+                Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType("application/json");
+                intent.putExtra(Intent.EXTRA_TITLE,"pixel-home-layout.json");
+                startActivityForResult(intent,REQUEST_EXPORT);
+            }else if(i==1) {
+                Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType("application/json");
+                startActivityForResult(intent,REQUEST_IMPORT);
+            }else new AlertDialog.Builder(this)
+                .setMessage("Android retains layouts during updates only when the package name and APK signer both match. Debug APKs compiled on different machines often have different signatures. Export before uninstalling. Widgets must be re-added after a reinstall.")
+                .setPositiveButton("OK",null).show();
+        });
+    }
+    private void writeBackup(android.net.Uri uri) {
+        saveLayout();
+        try {
+            JSONObject b=new JSONObject();
+            b.put("format","pixel-home-v6");
+            b.put("home",prefs.getString(KEY_HOME,"[]"));
+            b.put("dock",prefs.getString(KEY_DOCK,"[]"));
+            b.put("columns",columns);b.put("rows",rows);
+            b.put("label_font",labelFont);b.put("label_size",labelSizeSp);
+            b.put("show_search_bar",showSearchBar);
+            b.put("show_date_header",showDateHeader);
+            b.put("swipe_down_search",swipeDownSearch);
+            b.put("folder_spring",folderSpring);
+            b.put("reduce_motion",reduceMotion);
+            b.put("wallpaper_dim",wallpaperDim);
+            b.put("dock_slots",dockSlots);b.put("dock_style",dockStyle);
+            b.put("hidden_apps",new JSONArray(hiddenApps));
+            try(java.io.OutputStream out=getContentResolver().openOutputStream(uri)){
+                if(out==null)throw new java.io.IOException("No output stream");
+                out.write(b.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            toast("Backup saved");
+        }catch(Exception ex){toast("Backup failed: "+ex.getMessage());}
+    }
+    private void readBackup(android.net.Uri uri) {
+        try {
+            java.io.ByteArrayOutputStream memory=new java.io.ByteArrayOutputStream();
+            try(java.io.InputStream in=getContentResolver().openInputStream(uri)){
+                if(in==null)throw new java.io.IOException("No input stream");
+                byte[] buffer=new byte[4096];int n;
+                while((n=in.read(buffer))!=-1){
+                    if(memory.size()+n>1048576)throw new java.io.IOException("Backup too large");
+                    memory.write(buffer,0,n);
+                }
+            }
+            JSONObject b=new JSONObject(memory.toString("UTF-8"));
+            if(!"pixel-home-v6".equals(b.optString("format"))){
+                toast("Unsupported backup file");return;
+            }
+            JSONArray inputHome=new JSONArray(b.getString("home"));
+            JSONArray cleanHome=new JSONArray();
+            for(int i=0;i<inputHome.length();i++) {
+                JSONObject item=inputHome.optJSONObject(i);
+                if(item!=null&&!item.has("widget"))cleanHome.put(item);
+            }
+            JSONArray inputDock=new JSONArray(b.getString("dock"));
+            HashSet<String> hidden=new HashSet<>();
+            JSONArray h=b.optJSONArray("hidden_apps");
+            if(h!=null)for(int i=0;i<h.length();i++)hidden.add(h.optString(i));
+            prefs.edit()
+                .putString(KEY_HOME,cleanHome.toString()).putString(KEY_DOCK,inputDock.toString())
+                .putInt("columns",b.optInt("columns",4))
+                .putInt("rows",b.optInt("rows",5))
+                .putInt("label_size",b.optInt("label_size",15))
+                .putString("label_font",b.optString("label_font","Google Sans Medium"))
+                .putBoolean("show_search_bar",b.optBoolean("show_search_bar",true))
+                .putBoolean("show_date_header",b.optBoolean("show_date_header",true))
+                .putBoolean("swipe_down_search",b.optBoolean("swipe_down_search",true))
+                .putBoolean("folder_spring",b.optBoolean("folder_spring",true))
+                .putBoolean("reduce_motion",b.optBoolean("reduce_motion",false))
+                .putInt("wallpaper_dim",b.optInt("wallpaper_dim",18))
+                .putInt("dock_slots",b.optInt("dock_slots",5))
+                .putString("dock_style",b.optString("dock_style","Pixel"))
+                .putStringSet("hidden_apps",hidden).commit();
+            loadPreferences();restoreLayout();currentPage=0;refreshScreen();
+            toast("Layout & settings restored. Re-add widgets.");
+        }catch(Exception ex){toast("Restore failed: "+ex.getMessage());}
+    }
+
+    private void showSettings() {''')
+
+manifest=Path(sys.argv[1])/"app/src/main/AndroidManifest.xml"
+manifest.write_text(manifest.read_text().replace('android:allowBackup="false"',
+                                                'android:allowBackup="true"'))
+
+
 p.write_text(s)
 gradle=Path(sys.argv[1])/"app/build.gradle"
 g=gradle.read_text().replace("versionCode 5","versionCode 6").replace("versionName '1.4'","versionName '1.6'")
