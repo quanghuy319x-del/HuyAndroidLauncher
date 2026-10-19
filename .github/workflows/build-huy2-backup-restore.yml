@@ -1,0 +1,91 @@
+name: Build Huy Launcher 2 folder blur (backup restore)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-huy2-backup-restore.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout source patch
+        uses: actions/checkout@v4
+      - name: Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '21'
+      - name: Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --channel=3 'platforms;android-37.2' 'build-tools;37.0.0'
+      - name: Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+      - name: Fetch pinned official Lawnchair 16 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --recurse-submodules --branch 16-dev https://github.com/LawnchairLauncher/lawnchair.git upstream-lawnchair
+          git -C upstream-lawnchair fetch --depth 1 origin fc100ae9095a83b8b51c447a3b0a4ce2b399ad59
+          git -C upstream-lawnchair checkout fc100ae9095a83b8b51c447a3b0a4ce2b399ad59
+          git -C upstream-lawnchair submodule update --init --recursive --depth 1
+          test "$(git -C upstream-lawnchair rev-parse HEAD)" = fc100ae9095a83b8b51c447a3b0a4ce2b399ad59
+      - name: Apply Launcher 2 folder blur and preview changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 huy-launcher-2/apply_huy2.py upstream-lawnchair
+          # Target the ORIGINAL Launcher 2 package, not the stable migration ID.
+          # Its old temporary signing key is unavailable, so user must uninstall
+          # before installing and then import their exported layout/settings.
+          python3 - <<'PY'
+          from pathlib import Path
+          f = Path("upstream-lawnchair/build.gradle")
+          s = f.read_text()
+          assert s.count('applicationId "app.huy.androidlauncher2"') == 1
+          assert s.count('applicationIdSuffix ""') == 1
+          s = s.replace('applicationId "app.huy.androidlauncher2"',
+                        'applicationId "app.huy.androidlauncher2.debug"', 1)
+          f.write_text(s)
+          PY
+          git -C upstream-lawnchair diff --check
+      - name: Compile with official Android Gradle Plugin
+        shell: bash
+        working-directory: upstream-lawnchair
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleLawnWithQuickstepPlayDebug --stacktrace
+      - name: Check signature and permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' apks < <(find upstream-lawnchair/build/outputs/apk -type f -name '*.apk' -print0)
+          test "${#apks[@]}" -eq 1
+          apk="${apks[0]}"
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$apk"
+          "$ANDROID_HOME/build-tools/37.0.0/aapt" dump badging "$apk" > apk-info.txt
+          grep -F "name='app.huy.androidlauncher2.debug'" apk-info.txt
+          grep -F "application-label:'Huy android launcher 2'" apk-info.txt
+          "$ANDROID_HOME/build-tools/37.0.0/aapt" dump xmltree "$apk" AndroidManifest.xml > merged-manifest.txt
+          if grep -E 'BIND_ACCESSIBILITY_SERVICE|BIND_NOTIFICATION_LISTENER_SERVICE|ACCESS_RESTRICTED_SETTINGS' merged-manifest.txt; then
+            echo 'Restricted service unexpectedly present.'
+            exit 1
+          fi
+          mkdir -p output
+          cp "$apk" output/Huy_android_launcher_2_folder_blur_backup_restore.apk
+          sha256sum output/Huy_android_launcher_2_folder_blur_backup_restore.apk > output/SHA256.txt
+      - name: Upload backup-restore install package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Huy-Launcher-2-blur-backup-restore
+          path: output/*
+          if-no-files-found: error
