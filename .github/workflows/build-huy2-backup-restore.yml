@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/build-huy2-backup-restore.yml'
+      - 'huy-launcher-2/apply_huy2.py'
 
 permissions:
   contents: read
@@ -57,6 +58,8 @@ jobs:
           f.write_text(s)
           PY
           git -C upstream-lawnchair diff --check
+          grep -q 'WindowManager.LayoutParams.FLAG_BLUR_BEHIND' upstream-lawnchair/src/com/android/launcher3/folder/Folder.java
+          grep -q 'setBlurBehindRadius' upstream-lawnchair/src/com/android/launcher3/folder/Folder.java
       - name: Compile with official Android Gradle Plugin
         shell: bash
         working-directory: upstream-lawnchair
