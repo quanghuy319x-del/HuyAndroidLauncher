@@ -184,6 +184,59 @@ for item_count, expected_rows in {1: [1], 2: [2], 3: [3], 4: [3, 1],
         actual_rows.extend(len(page[i:i+3]) for i in range(0, len(page), 3))
     assert actual_rows == expected_rows, (item_count, actual_rows)
 
+# Android 14 does not grant ordinary apps access to the current wallpaper.
+# Add an explicit one-time user-selected wallpaper chooser in Folder Settings.
+# Content is copied into app-private storage using ACTION_OPEN_DOCUMENT,
+# so no MANAGE_EXTERNAL_STORAGE or READ_WALLPAPER_INTERNAL permission is needed.
+change("lawnchair/src/app/lawnchair/ui/preferences/destinations/FolderPreferences.kt",
+       "import androidx.compose.runtime.Composable",
+       """import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.Composable
+import android.content.Context
+import android.widget.Toast""")
+change("lawnchair/src/app/lawnchair/ui/preferences/destinations/FolderPreferences.kt",
+       "import app.lawnchair.ui.preferences.components.controls.SliderPreference",
+       """import app.lawnchair.ui.preferences.components.controls.ClickablePreference
+import app.lawnchair.ui.preferences.components.controls.SliderPreference""")
+change("lawnchair/src/app/lawnchair/ui/preferences/destinations/FolderPreferences.kt",
+       "        val context = LocalContext.current",
+       """        val context = LocalContext.current
+        val backdropPicker = rememberLauncherForActivityResult(
+            ActivityResultContracts.OpenDocument()
+        ) { uri ->
+            if (uri != null) {
+                try {
+                    val input = context.contentResolver.openInputStream(uri)
+                        ?: error("Cannot read image")
+                    input.use { src ->
+                        context.openFileOutput("huy_folder_wallpaper.image", Context.MODE_PRIVATE).use { dst ->
+                            src.copyTo(dst)
+                        }
+                    }
+                    Toast.makeText(context, "Blur wallpaper saved. Open a folder to test.", Toast.LENGTH_LONG).show()
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Cannot use this image: " + e.message, Toast.LENGTH_LONG).show()
+                }
+            }
+        }""")
+change("lawnchair/src/app/lawnchair/ui/preferences/destinations/FolderPreferences.kt",
+       """        PreferenceGroup(heading = stringResource(id = R.string.grid)) {""",
+       """        PreferenceGroup(heading = "Real folder backdrop blur") {
+            ClickablePreference(
+                label = "Choose the image used as your wallpaper",
+                onClick = { backdropPicker.launch(arrayOf("image/*")) },
+            )
+            ClickablePreference(
+                label = "Clear custom blur wallpaper",
+                onClick = {
+                    context.deleteFile("huy_folder_wallpaper.image")
+                    Toast.makeText(context, "Custom blur wallpaper cleared", Toast.LENGTH_SHORT).show()
+                },
+            )
+        }
+        PreferenceGroup(heading = stringResource(id = R.string.grid)) {""")
+
 # Match the successful Huy Launcher 1 privacy fix: no notification listener,
 # accessibility service, or ACCESS_RESTRICTED_SETTINGS in the merged manifest.
 change("AndroidManifest-common.xml",
