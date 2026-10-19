@@ -538,6 +538,7 @@ change(folder_source,
                 screenshot.recycle();
             }
         }
+    }
 
     /**
      * Uniform backdrop: wallpaper blurred via Lawnchair's native
