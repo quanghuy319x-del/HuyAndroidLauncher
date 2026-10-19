@@ -74,6 +74,38 @@ change(organizer, "// First page items are laid out such that the first 4 items 
 change(organizer, "// If we have less than 4 items do this",
        "// If we have fewer than 9 items do this")
 
+# Privacy: an internet-sideloaded launcher that registers a NotificationListener
+# or an AccessibilityService can be blocked by Play Protect enhanced fraud
+# protection. Neither privileged service is required for a 3x3 folder icon.
+# Removing the declarations disables notification dots and some optional
+# accessibility-dependent gestures but keeps the core launcher.
+change("AndroidManifest-common.xml",
+       """        <service
+            android:name="com.android.launcher3.notification.NotificationListener"
+            android:label="@string/notification_dots_service_title"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>""", "")
+change("lawnchair/AndroidManifest.xml",
+       """        <service
+            android:name="app.lawnchair.LawnchairAccessibilityService"
+            android:exported="false"
+            android:label="@string/derived_app_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>""", "")
+change("AndroidManifest-common.xml",
+       '    <uses-permission android:name="android.permission.ACCESS_RESTRICTED_SETTINGS" />',
+       '')
+
 # Build a separately installable Play-flavor debug app so existing Lawnchair
 # stays installed. Android Gradle Plugin handles packaging and signing.
 change("build.gradle", 'applicationId "app.lawnchair.play"',
