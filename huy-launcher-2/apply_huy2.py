@@ -29,12 +29,12 @@ change(layout,
        "public static final int MAX_NUM_ITEMS_IN_PREVIEW = 9;")
 
 # Preserve Lawnchair's 1-4 icon positions. For 5-9, use three equally spaced
-# rows/columns with 17% outer padding and larger, non-overlapping icons, as in iOS folder previews.
+# rows/columns with an iOS-like 8% grid inset and 23%-width icons.
 # The rounded/circular corners must be respected, not merely the square bounds.
 change(layout,
        "        // The case of two items is homomorphic to the case of one.\n",
        """        if (curNumItems > 4 && index >= 0) {
-            final float inset = mAvailableSpace * 0.17f;
+            final float inset = mAvailableSpace * 0.08f;
             final float cellSize = (mAvailableSpace - inset * 2f) / 3f;
             final float drawnSize = mIconSize * scaleForItem(curNumItems, 0);
             final int row = index / 3;
@@ -61,7 +61,7 @@ change(layout,
         } else {
             scale = MIN_SCALE;""",
        """        } else if (numItems > 4) {
-            scale = 0.22f; // 22% larger: 3-per-row, within the rounded folder outline.
+            scale = 0.23f; // Each mini-icon occupies 23% of folder width.
         } else if (numItems <= 3) {
             scale = MAX_SCALE;
         } else {
@@ -93,15 +93,17 @@ change("src/com/android/launcher3/folder/PreviewItemManager.java",
         drawParams(canvas, mFirstPageParams, firstPageOffset,
                 /* shouldClipPath */ isThreeByThreePreview, clipPath);""")
 
-# Geometry sanity check: the far corners of the 3x3 icon squares lie within
-# a circle of radius 0.48*previewSize, leaving room for a folder border.
+# iOS screenshot: icon 23%, outer margin 10.5%, inter-icon gap 5%.
+# Enforce sizes so icons fit within the rounded folder.
 import math
-inset = 0.17
-icon_width = 0.22
+inset = 0.08
+icon_width = 0.23
 cell = (1 - 2 * inset) / 3
 outer = inset + 0.5 * cell - 0.5 * icon_width
 assert cell + 1e-6 >= icon_width, "3x3 icons overlap"
-assert math.hypot(0.5 - outer, 0.5 - outer) < 0.48, "3x3 corner icons are too large"
+assert abs(outer - 0.105) < 0.005, "3x3 edge spacing differs from reference"
+assert abs((cell - icon_width) - 0.05) < 0.005, "3x3 gap differs from reference"
+assert math.hypot(0.5 - outer, 0.5 - outer) < 0.56, "3x3 corner icons are too large"
 
 # Translucent glass background on CLOSED folder previews: a gentle
 # two-stop highlight, consistent 1dp rim, and the original selected folder
@@ -270,7 +272,11 @@ change("quickstep/src/com/android/launcher3/statehandlers/DepthController.java",
             // The user may have disabled Lawnchair's normal depth preference;
             // folder blurring is a separate opt-in feature, so apply directly.
             super.applyDepthAndBlur();
-            return fraction <= 0f || mCurrentBlur > 0;
+            // mCurrentBlur alone does not prove wallpaper blur is drawn.
+            // On some devices the SurfaceControl is absent/invalid, leaving
+            // the wallpaper sharp while only widgets are blurred.
+            return fraction <= 0f || (mCurrentBlur > 0
+                    && mBaseSurface != null && mBaseSurface.isValid());
         } catch (Throwable t) {
             return false;
         }
@@ -311,7 +317,7 @@ change(folder_source,
         final BaseDragLayer dragLayer = mActivityContext.getDragLayer();
         if (mHuyUniformFolderOverlay == null) {
             mHuyUniformFolderOverlay = new View(getContext());
-            mHuyUniformFolderOverlay.setBackgroundColor(Color.BLACK);
+            mHuyUniformFolderOverlay.setBackgroundColor(Color.rgb(91, 108, 122));
             mHuyUniformFolderOverlay.setAlpha(0f);
             mHuyUniformFolderOverlay.setClickable(false);
             mHuyUniformFolderOverlay.setImportantForAccessibility(
@@ -323,6 +329,8 @@ change(folder_source,
                     new BaseDragLayer.LayoutParams(
                             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                             android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+            // The open folder stays sharp above the full-screen overlay.
+            dragLayer.bringChildToFront(this);
         }
     }
 
@@ -336,9 +344,8 @@ change(folder_source,
         if (!Utilities.ATLEAST_S || !(mActivityContext instanceof Launcher launcher)) {
             return;
         }
-        if (launcher.getStateManager().getState().getDepth(launcher) != 0f) {
-            return;
-        }
+        // Always draw the uniform backdrop, even when wallpaper-depth blur
+        // cannot be enabled or the launcher is mid-transition.
         ensureHuyFolderOverlay(launcher);
         final float maxRadius = 8f * getResources().getDisplayMetrics().density;
         final ValueAnimator blur = ValueAnimator.ofFloat(
@@ -360,7 +367,7 @@ change(folder_source,
                 target.setRenderEffect(effect);
             }
             if (mHuyUniformFolderOverlay != null) {
-                mHuyUniformFolderOverlay.setAlpha((wallpaperBlurActive ? 0.18f : 0.35f) * progress);
+                mHuyUniformFolderOverlay.setAlpha((wallpaperBlurActive ? 0.22f : 0.56f) * progress);
             }
         });
         folderAnimator.play(blur);
