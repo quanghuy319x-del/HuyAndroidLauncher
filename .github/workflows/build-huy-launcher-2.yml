@@ -95,7 +95,7 @@ jobs:
           apk="${apks[0]}"
           "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$apk"
           "$ANDROID_HOME/build-tools/37.0.0/aapt" dump badging "$apk" > apk-info.txt
-          grep -F "name='app.huy.androidlauncher2.debug'" apk-info.txt
+          grep -F "name='app.huy.androidlauncher2.preview.debug'" apk-info.txt
           grep -F "application-label:'Huy android launcher 2'" apk-info.txt
           "$ANDROID_HOME/build-tools/37.0.0/aapt" dump xmltree "$apk" AndroidManifest.xml > merged-manifest.txt
           if grep -E 'BIND_ACCESSIBILITY_SERVICE|BIND_NOTIFICATION_LISTENER_SERVICE|ACCESS_RESTRICTED_SETTINGS' merged-manifest.txt; then
