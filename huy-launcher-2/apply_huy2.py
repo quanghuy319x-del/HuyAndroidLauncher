@@ -137,8 +137,59 @@ change("AndroidManifest-common.xml",
        '    <uses-permission android:name="android.permission.ACCESS_RESTRICTED_SETTINGS" />',
        "")
 
-# Blur the home-screen icons and dock behind an open folder, without
-# blurring the folder contents. Works with classic and expressive animations.
+# One uniform folder backdrop. This removes FLAG_BLUR_BEHIND: that API blurred
+# only patches on Pixel 5 (sharp wallpaper + extremely blurred widgets).
+# Instead ask Lawnchair's own DepthController to blur the wallpaper surface,
+# blur the workspace/dock modestly, and use one even translucent overlay.
+# No wallpaper-reading permissions are needed (Android 14 forbids reading it).
+change("src/com/android/launcher3/Launcher.java",
+       "    /** @return list of View targets to be blurred based on changes to depth. */",
+       """    /** Blur the wallpaper below an open folder, if supported by this launcher. */
+    public boolean setHuyFolderWallpaperBlur(float fraction) {
+        return false;
+    }
+
+    /** @return list of View targets to be blurred based on changes to depth. */""")
+
+change("quickstep/src/com/android/launcher3/uioverrides/QuickstepLauncher.java",
+       "    public DepthController getDepthController() {",
+       """    @Override
+    public boolean setHuyFolderWallpaperBlur(float fraction) {
+        return mDepthController != null
+                && mDepthController.setHuyFolderDepth(fraction);
+    }
+
+    public DepthController getDepthController() {""")
+
+# The public widgetDepth multiproperty is used for workspace/recents transitions.
+# Reuse that existing wallpaper-surface blur path for folders rather than relying
+# on FLAG_BLUR_BEHIND or trying to read protected wallpaper pixels.
+change("quickstep/src/com/android/launcher3/statehandlers/DepthController.java",
+       "    private void onLauncherDraw() {",
+       """    /**
+     * Apply folder wallpaper blur through the existing SurfaceControl depth pipeline.
+     * May return false if Android's cross-window blur setting is disabled.
+     */
+    public boolean setHuyFolderDepth(float fraction) {
+        if (!Utilities.ATLEAST_S) {
+            return false;
+        }
+        try {
+            ensureDependencies();
+            mCrossWindowBlursEnabled =
+                    CrossWindowBlurListeners.getInstance().isCrossWindowBlurEnabled();
+            widgetDepth.setValue(Math.max(0f, Math.min(0.32f, fraction)));
+            // The user may have disabled Lawnchair's normal depth preference;
+            // folder blurring is a separate opt-in feature, so apply directly.
+            super.applyDepthAndBlur();
+            return fraction <= 0f || mCurrentBlur > 0;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private void onLauncherDraw() {""")
+
 folder_source = "src/com/android/launcher3/folder/Folder.java"
 change(folder_source,
        "import android.animation.AnimatorSet;",
@@ -148,7 +199,8 @@ change(folder_source,
        "import android.graphics.Rect;\nimport android.graphics.RenderEffect;\nimport android.graphics.Shader;")
 change(folder_source,
        "import android.view.View;",
-       "import android.view.View;\nimport android.view.WindowManager;")
+       "import android.view.View;\nimport android.graphics.Color;")
+
 change(folder_source,
        """        AnimatorSet animatorSet = getFolderAnimationManager()
                 .createAnimatorSet(/* isOpening */ true);""",
@@ -162,65 +214,80 @@ change(folder_source,
                 .createAnimatorSet(/* isOpening */ false);
         addHuyFolderBackgroundBlur(animatorSet, false);""")
 
-# RenderEffect is supported on Android 12+. Leave stock dimming untouched on
-# older Android. Reuse the launcher's blur targets instead of affecting folder UI.
 change(folder_source,
        "    private void restoreLauncherAfterFolderDismissed() {",
-       """    /**
-     * Huy Launcher 2: medium full-screen folder background blur.
-     * RenderEffect blurs icons/widgets/dock within the launcher window.
-     * WindowManager.FLAG_BLUR_BEHIND blurs the wallpaper (which lives behind
-     * the launcher surface). The open folder stays sharp above both effects.
-     * closeComplete() always clears the effects on dismissal.
+       """    private View mHuyUniformFolderOverlay;
+
+    /** One even overlay over wallpaper, widgets, dock and icons; below folder. */
+    private void ensureHuyFolderOverlay(Launcher launcher) {
+        final BaseDragLayer dragLayer = mActivityContext.getDragLayer();
+        if (mHuyUniformFolderOverlay == null) {
+            mHuyUniformFolderOverlay = new View(getContext());
+            mHuyUniformFolderOverlay.setBackgroundColor(Color.BLACK);
+            mHuyUniformFolderOverlay.setAlpha(0f);
+            mHuyUniformFolderOverlay.setClickable(false);
+            mHuyUniformFolderOverlay.setImportantForAccessibility(
+                    View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        }
+        if (mHuyUniformFolderOverlay.getParent() == null && getParent() == dragLayer) {
+            dragLayer.addView(mHuyUniformFolderOverlay,
+                    dragLayer.indexOfChild(this),
+                    new BaseDragLayer.LayoutParams(
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+    }
+
+    /**
+     * iOS-like uniform backdrop: wallpaper blurred via Lawnchair's native
+     * DepthController (when Android supports it), workspace/dock blurred with
+     * RenderEffect, and the SAME gentle dark overlay over the entire screen.
+     * The opened folder is drawn above the overlay and stays sharp.
      */
     private void addHuyFolderBackgroundBlur(AnimatorSet folderAnimator, boolean isOpening) {
         if (!Utilities.ATLEAST_S || !(mActivityContext instanceof Launcher launcher)) {
             return;
         }
         if (launcher.getStateManager().getState().getDepth(launcher) != 0f) {
-            return; // Do not interfere with depth blur during state transitions.
+            return;
         }
-        final float radiusPx = 20f * getResources().getDisplayMetrics().density;
+        ensureHuyFolderOverlay(launcher);
+        final float maxRadius = 14f * getResources().getDisplayMetrics().density;
         final ValueAnimator blur = ValueAnimator.ofFloat(
-                isOpening ? 0f : radiusPx, isOpening ? radiusPx : 0f);
-        blur.setDuration(isOpening ? 230 : 190);
+                isOpening ? 0f : 1f, isOpening ? 1f : 0f);
+        blur.setDuration(isOpening ? 220 : 180);
         blur.addUpdateListener(animation -> {
-            final float radius = (float) animation.getAnimatedValue();
-            final RenderEffect effect = radius < 0.5f
-                    ? null
-                    : RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP);
+            final float progress = (float) animation.getAnimatedValue();
+            // Blur wallpaper underneath the window, not just individual widgets.
+            launcher.setHuyFolderWallpaperBlur(0.32f * progress);
+            final float radius = maxRadius * progress;
+            final RenderEffect effect = radius < 0.5f ? null
+                    : RenderEffect.createBlurEffect(
+                            radius, radius, Shader.TileMode.CLAMP);
             for (View target : launcher.getDepthBlurTargets()) {
                 target.setRenderEffect(effect);
             }
-            // Blur wallpaper / live wallpaper behind the activity, too.
-            // Public Android 12+ API; may be disabled by system power settings.
-            final WindowManager.LayoutParams attrs = launcher.getWindow().getAttributes();
-            if (radius < 0.5f) {
-                attrs.setBlurBehindRadius(0);
-                attrs.flags &= ~WindowManager.LayoutParams.FLAG_BLUR_BEHIND;
-            } else {
-                attrs.flags |= WindowManager.LayoutParams.FLAG_BLUR_BEHIND;
-                attrs.setBlurBehindRadius(Math.round(radius));
+            if (mHuyUniformFolderOverlay != null) {
+                mHuyUniformFolderOverlay.setAlpha(0.17f * progress);
             }
-            launcher.getWindow().setAttributes(attrs);
         });
         folderAnimator.play(blur);
     }
 
     private void restoreLauncherAfterFolderDismissed() {""")
 
-
-# Always remove wallpaper blur when a folder closes without an animation,
-# for example after launching an app from the folder.
+# Restore after closing a folder without animation, including app launches.
+# Never leave wallpaper depth or a dark overlay stuck on the home screen.
 change(folder_source,
        """        if (scrim != null) {
             scrim.setAlpha(1f);""",
-       """        if (Utilities.ATLEAST_S) {
-            // Always restore wallpaper/window blur even on a cancelled animation.
-            final WindowManager.LayoutParams attrs = launcher.getWindow().getAttributes();
-            attrs.setBlurBehindRadius(0);
-            attrs.flags &= ~WindowManager.LayoutParams.FLAG_BLUR_BEHIND;
-            launcher.getWindow().setAttributes(attrs);
+       """        launcher.setHuyFolderWallpaperBlur(0f);
+        if (mHuyUniformFolderOverlay != null) {
+            mHuyUniformFolderOverlay.setAlpha(0f);
+            if (mHuyUniformFolderOverlay.getParent() instanceof
+                    android.view.ViewGroup group) {
+                group.removeView(mHuyUniformFolderOverlay);
+            }
         }
         if (scrim != null) {
             scrim.setAlpha(1f);""")
