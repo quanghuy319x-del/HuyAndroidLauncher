@@ -1,0 +1,115 @@
+name: Build Huy android launcher 2 (Lawnchair 16)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'huy-launcher-2/**'
+      - '.github/workflows/build-huy-launcher-2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - name: Checkout Huy 2 patch
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '21'
+
+      - name: Install Android SDK 37.2
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          "$SDKMANAGER" --channel=3 'platforms;android-37.2' 'build-tools;37.0.0'
+          test -f "$ANDROID_HOME/platforms/android-37.2/android.jar"
+          test -x "$ANDROID_HOME/build-tools/37.0.0/apksigner"
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Checkout exact Lawnchair 16 revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --recurse-submodules --branch 16-dev \
+            https://github.com/LawnchairLauncher/lawnchair.git upstream-lawnchair
+          git -C upstream-lawnchair fetch --depth 1 origin fc100ae9095a83b8b51c447a3b0a4ce2b399ad59
+          git -C upstream-lawnchair checkout fc100ae9095a83b8b51c447a3b0a4ce2b399ad59
+          git -C upstream-lawnchair submodule update --init --recursive --depth 1
+          test "$(git -C upstream-lawnchair rev-parse HEAD)" = fc100ae9095a83b8b51c447a3b0a4ce2b399ad59
+
+      - name: Apply Huy Launcher 2 customizations
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 huy-launcher-2/apply_huy2.py upstream-lawnchair
+          git -C upstream-lawnchair diff --check
+          git -C upstream-lawnchair diff --stat
+
+      - name: Configure signing if private secrets are available
+        shell: bash
+        env:
+          HUY2_KEYSTORE_BASE64: ${{ secrets.HUY2_KEYSTORE_BASE64 }}
+          HUY2_KEYSTORE_PASSWORD: ${{ secrets.HUY2_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$HUY2_KEYSTORE_BASE64" && -n "$HUY2_KEYSTORE_PASSWORD" ]]; then
+            printf '%s' "$HUY2_KEYSTORE_BASE64" | base64 --decode > upstream-lawnchair/huy2-keystore.p12
+            {
+              echo 'storeFile=huy2-keystore.p12'
+              echo 'keyAlias=huylauncher2'
+              printf 'storePassword=%s\n' "$HUY2_KEYSTORE_PASSWORD"
+              printf 'keyPassword=%s\n' "$HUY2_KEYSTORE_PASSWORD"
+            } > upstream-lawnchair/keystore.properties
+            chmod 600 upstream-lawnchair/huy2-keystore.p12 upstream-lawnchair/keystore.properties
+            echo "Using saved stable signing key"
+          else
+            echo "Using ephemeral debug signing; future updates may require uninstall."
+          fi
+
+      - name: Compile Lawnchair 16 with official Gradle plugin
+        shell: bash
+        working-directory: upstream-lawnchair
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleLawnWithQuickstepPlayDebug --stacktrace
+
+      - name: Verify package, signing and reduced-risk manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' apks < <(find upstream-lawnchair/build/outputs/apk -type f -name '*.apk' -print0)
+          test "${#apks[@]}" -eq 1
+          apk="${apks[0]}"
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$apk"
+          "$ANDROID_HOME/build-tools/37.0.0/aapt" dump badging "$apk" > apk-info.txt
+          grep -F "name='app.huy.androidlauncher2.debug'" apk-info.txt
+          grep -F "application-label:'Huy android launcher 2'" apk-info.txt
+          "$ANDROID_HOME/build-tools/37.0.0/aapt" dump xmltree "$apk" AndroidManifest.xml > merged-manifest.txt
+          if grep -E 'BIND_ACCESSIBILITY_SERVICE|BIND_NOTIFICATION_LISTENER_SERVICE|ACCESS_RESTRICTED_SETTINGS' merged-manifest.txt; then
+            echo "ERROR: Risk-sensitive permission or service still declared"
+            exit 1
+          fi
+          echo "PASS: No AccessibilityService, NotificationListener or restricted-settings declaration."
+          mkdir -p output
+          cp "$apk" output/Huy_android_launcher_2.apk
+          sha256sum output/Huy_android_launcher_2.apk > output/SHA256.txt
+
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Huy-android-launcher-2-APK
+          path: output/*
+          if-no-files-found: error
