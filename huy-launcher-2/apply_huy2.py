@@ -53,16 +53,6 @@ change(layout,
        "        } else if (numItems == MAX_NUM_ITEMS_IN_PREVIEW) {",
        "        } else if (numItems == 4) {")
 
-# Fixed preview size for any number of items, including 1/2/3/4.
-change(layout,
-       """        } else if (numItems <= 3) {
-            scale = MAX_SCALE;
-        } else {
-            scale = MIN_SCALE;""",
-       """        } else {
-            scale = 0.23f; // Same size for 1, 2, ... 9 or more items.
-        }""")
-
 # Keep ALL 3x3 mini-icons inside the folder border, even for 1-4 apps.
 # The original Lawnchair clip path intentionally allows icons to overflow.
 change("src/com/android/launcher3/folder/PreviewBackground.java",
