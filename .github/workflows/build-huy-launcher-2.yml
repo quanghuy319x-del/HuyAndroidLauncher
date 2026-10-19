@@ -92,9 +92,10 @@ jobs:
           "$ANDROID_HOME/build-tools/37.0.0/aapt" dump badging "$apk" > apk-info.txt
           grep -F "name='app.huy.androidlauncher2'" apk-info.txt
           grep -F "application-label:'Huy android launcher 2'" apk-info.txt
-          keytool -list -v -storetype PKCS12 -keystore upstream-lawnchair/huy2-keystore.p12 -alias huylauncher2 -storepass "$HUY2_KEYSTORE_PASSWORD" > expected-signer.txt
-          apk_cert=$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs "$apk" | grep 'Signer #1 certificate SHA-256 digest' | head -n 1 | tr -d '\r' | sed 's/.*: *//')
-          expected_cert=$(grep 'SHA256:' expected-signer.txt | head -n 1 | sed 's/.*SHA256: *//' | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          # This public certificate digest is fixed for the lifetime of Launcher 2.
+          # It detects accidental secret rotation before a bad update is distributed.
+          expected_cert="36758c6fe2a6cee38c81f2b42f868119b29a5f173e8015cb03ab440c467751d0"
+          apk_cert=$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs "$apk" | awk -F ': ' '/certificate SHA-256 digest/ {print $NF; exit}' | tr -d '\r' | tr '[:upper:]' '[:lower:]')
           test -n "$apk_cert"
           test -n "$expected_cert"
           if [[ "$apk_cert" != "$expected_cert" ]]; then
