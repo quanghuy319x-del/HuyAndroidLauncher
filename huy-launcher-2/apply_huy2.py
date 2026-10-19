@@ -147,6 +147,9 @@ change(folder_source,
        "import android.graphics.Rect;",
        "import android.graphics.Rect;\nimport android.graphics.RenderEffect;\nimport android.graphics.Shader;")
 change(folder_source,
+       "import android.view.View;",
+       "import android.view.View;\nimport android.view.WindowManager;")
+change(folder_source,
        """        AnimatorSet animatorSet = getFolderAnimationManager()
                 .createAnimatorSet(/* isOpening */ true);""",
        """        AnimatorSet animatorSet = getFolderAnimationManager()
@@ -164,9 +167,11 @@ change(folder_source,
 change(folder_source,
        "    private void restoreLauncherAfterFolderDismissed() {",
        """    /**
-     * Huy Launcher 2: background blur while a folder is open.
-     * The folder stays sharp; the workspace and dock blur together.
-     * closeComplete() already restores the targets after dismissal.
+     * Huy Launcher 2: medium full-screen folder background blur.
+     * RenderEffect blurs icons/widgets/dock within the launcher window.
+     * WindowManager.FLAG_BLUR_BEHIND blurs the wallpaper (which lives behind
+     * the launcher surface). The open folder stays sharp above both effects.
+     * closeComplete() always clears the effects on dismissal.
      */
     private void addHuyFolderBackgroundBlur(AnimatorSet folderAnimator, boolean isOpening) {
         if (!Utilities.ATLEAST_S || !(mActivityContext instanceof Launcher launcher)) {
@@ -175,7 +180,7 @@ change(folder_source,
         if (launcher.getStateManager().getState().getDepth(launcher) != 0f) {
             return; // Do not interfere with depth blur during state transitions.
         }
-        final float radiusPx = 14f * getResources().getDisplayMetrics().density;
+        final float radiusPx = 20f * getResources().getDisplayMetrics().density;
         final ValueAnimator blur = ValueAnimator.ofFloat(
                 isOpening ? 0f : radiusPx, isOpening ? radiusPx : 0f);
         blur.setDuration(isOpening ? 230 : 190);
@@ -187,11 +192,38 @@ change(folder_source,
             for (View target : launcher.getDepthBlurTargets()) {
                 target.setRenderEffect(effect);
             }
+            // Blur wallpaper / live wallpaper behind the activity, too.
+            // Public Android 12+ API; may be disabled by system power settings.
+            final WindowManager.LayoutParams attrs = launcher.getWindow().getAttributes();
+            if (radius < 0.5f) {
+                attrs.setBlurBehindRadius(0);
+                attrs.flags &= ~WindowManager.LayoutParams.FLAG_BLUR_BEHIND;
+            } else {
+                attrs.flags |= WindowManager.LayoutParams.FLAG_BLUR_BEHIND;
+                attrs.setBlurBehindRadius(Math.round(radius));
+            }
+            launcher.getWindow().setAttributes(attrs);
         });
         folderAnimator.play(blur);
     }
 
     private void restoreLauncherAfterFolderDismissed() {""")
+
+
+# Always remove wallpaper blur when a folder closes without an animation,
+# for example after launching an app from the folder.
+change(folder_source,
+       """        if (scrim != null) {
+            scrim.setAlpha(1f);""",
+       """        if (Utilities.ATLEAST_S) {
+            // Always restore wallpaper/window blur even on a cancelled animation.
+            final WindowManager.LayoutParams attrs = launcher.getWindow().getAttributes();
+            attrs.setBlurBehindRadius(0);
+            attrs.flags &= ~WindowManager.LayoutParams.FLAG_BLUR_BEHIND;
+            launcher.getWindow().setAttributes(attrs);
+        }
+        if (scrim != null) {
+            scrim.setAlpha(1f);""")
 
 change("build.gradle", 'applicationId "app.lawnchair.play"',
        'applicationId "app.huy.androidlauncher2"')
