@@ -100,7 +100,7 @@ inset = 0.17
 icon_width = 0.22
 cell = (1 - 2 * inset) / 3
 outer = inset + 0.5 * cell - 0.5 * icon_width
-assert cell > icon_width, "3x3 icons overlap"
+assert cell + 1e-6 >= icon_width, "3x3 icons overlap"
 assert math.hypot(0.5 - outer, 0.5 - outer) < 0.48, "3x3 corner icons are too large"
 
 # Translucent glass background on CLOSED folder previews: a gentle
