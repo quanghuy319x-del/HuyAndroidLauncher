@@ -145,7 +145,7 @@ change("src/com/android/launcher3/folder/Folder.java",
                 Color.argb(180, 255, 255, 255));""")
 change("src/com/android/launcher3/folder/FolderAnimationManager.java",
        "int finalColor = LawnchairUtilsKt.resolveFolderBackgroundColor(mContext);",
-       "int finalColor = Color.argb(206, 247, 250, 255);")
+       "int finalColor = android.graphics.Color.argb(206, 247, 250, 255);")
 change("src/com/android/launcher3/folder/FolderSpringAnimatorSet.kt",
        "val finalColor = app.lawnchair.util.resolveFolderBackgroundColor(context)",
        "val finalColor = Color.argb(206, 247, 250, 255)")
