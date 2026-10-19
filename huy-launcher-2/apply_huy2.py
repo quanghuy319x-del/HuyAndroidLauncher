@@ -417,6 +417,12 @@ change(folder_source,
        """    private View mHuyUniformFolderOverlay;
     private Bitmap mHuyBackdropBitmap;
     private boolean mHuyHasBackdropSnapshot;
+    // One shared backdrop cache for every folder. Never decode wallpaper or
+    // draw widgets synchronously in the folder opening animation.
+    private static Bitmap sHuyCachedBackdrop;
+    private static long sHuyWallpaperStamp = -1L, sHuyCacheCreatedAt;
+    private static int sHuyCacheWidth, sHuyCacheHeight;
+    private static boolean sHuyWarmupScheduled;
 
     /** One even overlay over wallpaper, widgets, dock and icons; below folder. */
     private void ensureHuyFolderOverlay(Launcher launcher) {
@@ -438,10 +444,56 @@ change(folder_source,
             // The open folder stays sharp above the full-screen overlay.
             dragLayer.bringChildToFront(this);
         }
-        // Recreate the blurred screenshot at each folder open. A user-selected
-        // wallpaper image is required because Android 14 denies wallpaper reads
-        // to a normal launcher. The screenshot includes widgets, icons and dock.
-        mHuyHasBackdropSnapshot = createHuyFolderSnapshot(launcher, dragLayer);
+        // Just attach the PRECOMPUTED bitmap. No decoding or view drawing
+        // during the touch event: folder popup should be instantaneous.
+        File wallpaper = new File(launcher.getFilesDir(),
+                "huy_folder_wallpaper.image");
+        mHuyHasBackdropSnapshot = sHuyCachedBackdrop != null
+                && !sHuyCachedBackdrop.isRecycled() && wallpaper.isFile()
+                && wallpaper.lastModified() == sHuyWallpaperStamp
+                && dragLayer.getWidth() == sHuyCacheWidth
+                && dragLayer.getHeight() == sHuyCacheHeight;
+        if (mHuyHasBackdropSnapshot
+                && mHuyUniformFolderOverlay instanceof ImageView image) {
+            image.setBackgroundColor(Color.TRANSPARENT);
+            image.setImageBitmap(sHuyCachedBackdrop);
+            float radius = 25f * getResources().getDisplayMetrics().density;
+            image.setRenderEffect(RenderEffect.createBlurEffect(
+                    radius, radius, Shader.TileMode.CLAMP));
+        } else {
+            mHuyUniformFolderOverlay.setBackgroundColor(Color.rgb(91, 108, 122));
+        }
+    }
+
+    /** Draw the full backdrop in an idle frame, never on a folder tap. */
+    private void scheduleHuyBackdropWarmup(Launcher launcher, long delayMillis) {
+        File wallpaper = new File(launcher.getFilesDir(),
+                "huy_folder_wallpaper.image");
+        if (!wallpaper.isFile() || sHuyWarmupScheduled) {
+            return;
+        }
+        BaseDragLayer layer = launcher.getDragLayer();
+        if (sHuyCachedBackdrop != null && !sHuyCachedBackdrop.isRecycled()
+                && sHuyWallpaperStamp == wallpaper.lastModified()
+                && sHuyCacheWidth == layer.getWidth()
+                && sHuyCacheHeight == layer.getHeight()
+                && System.currentTimeMillis() - sHuyCacheCreatedAt < 15000L) {
+            return;
+        }
+        sHuyWarmupScheduled = true;
+        layer.postDelayed(() -> {
+            sHuyWarmupScheduled = false;
+            if (getParent() == layer || layer.getWidth() < 100
+                    || layer.getHeight() < 100) {
+                return;
+            }
+            if (mHuyUniformFolderOverlay == null) {
+                mHuyUniformFolderOverlay = new ImageView(getContext());
+                mHuyUniformFolderOverlay.setAlpha(0f);
+                mHuyUniformFolderOverlay.setClickable(false);
+            }
+            createHuyFolderSnapshot(launcher, layer);
+        }, delayMillis);
     }
 
     private boolean createHuyFolderSnapshot(Launcher launcher, BaseDragLayer dragLayer) {
@@ -521,9 +573,14 @@ change(folder_source,
             final float blurPx = 25f * getResources().getDisplayMetrics().density;
             imageView.setRenderEffect(RenderEffect.createBlurEffect(
                     blurPx, blurPx, Shader.TileMode.CLAMP));
-            if (mHuyBackdropBitmap != null) {
-                mHuyBackdropBitmap.recycle();
+            if (sHuyCachedBackdrop != null && sHuyCachedBackdrop != screenshot) {
+                sHuyCachedBackdrop.recycle();
             }
+            sHuyCachedBackdrop = screenshot;
+            sHuyWallpaperStamp = imageFile.lastModified();
+            sHuyCacheWidth = w;
+            sHuyCacheHeight = h;
+            sHuyCacheCreatedAt = System.currentTimeMillis();
             mHuyBackdropBitmap = screenshot;
             screenshot = null;
             return true;
@@ -556,7 +613,7 @@ change(folder_source,
         final float maxRadius = 8f * getResources().getDisplayMetrics().density;
         final ValueAnimator blur = ValueAnimator.ofFloat(
                 isOpening ? 0f : 1f, isOpening ? 1f : 0f);
-        blur.setDuration(isOpening ? 220 : 180);
+        blur.setDuration(isOpening ? 110 : 95);
         blur.addUpdateListener(animation -> {
             final float progress = (float) animation.getAnimatedValue();
             if (mHuyHasBackdropSnapshot) {
@@ -591,6 +648,31 @@ change(folder_source,
 
     private void restoreLauncherAfterFolderDismissed() {""")
 
+change(folder_source,
+       """        mFolderIcon.post(() -> {
+            if (getItemCount() <= 1) {
+                replaceFolderWithFinalItem();
+            }
+        });""",
+       """        mFolderIcon.post(() -> {
+            if (getItemCount() <= 1) {
+                replaceFolderWithFinalItem();
+            }
+        });
+        // Precompute once while the home screen is idle.
+        if (mActivityContext instanceof Launcher launcher) {
+            scheduleHuyBackdropWarmup(launcher, 700);
+        }""")
+change(folder_source,
+       """        restoreLauncherAfterFolderDismissed();
+    }""",
+       """        restoreLauncherAfterFolderDismissed();
+        // After dismissal, refresh only during idle time.
+        if (mActivityContext instanceof Launcher launcher) {
+            scheduleHuyBackdropWarmup(launcher, 450);
+        }
+    }""")
+
 # Restore after closing a folder without animation, including app launches.
 # Never leave wallpaper depth or a dark overlay stuck on the home screen.
 change(folder_source,
@@ -603,10 +685,8 @@ change(folder_source,
                 image.setImageDrawable(null);
                 image.setRenderEffect(null);
             }
-            if (mHuyBackdropBitmap != null) {
-                mHuyBackdropBitmap.recycle();
-                mHuyBackdropBitmap = null;
-            }
+            // Shared cache survives folder close for instant next opening.
+            mHuyBackdropBitmap = null;
             mHuyHasBackdropSnapshot = false;
             if (mHuyUniformFolderOverlay.getParent() instanceof
                     android.view.ViewGroup group) {
