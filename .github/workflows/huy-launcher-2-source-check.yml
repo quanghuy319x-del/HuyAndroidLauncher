@@ -1,0 +1,62 @@
+name: Verify Huy Launcher 2 source changes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'huy-launcher-2/**'
+      - '.github/workflows/huy-launcher-2-source-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 85
+    steps:
+      - name: Checkout patch sources
+        uses: actions/checkout@v4
+      - name: Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '21'
+      - name: Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --channel=3 'platforms;android-37.2' 'build-tools;37.0.0'
+      - name: Gradle dependency cache
+        uses: gradle/actions/setup-gradle@v4
+      - name: Checkout pinned Lawnchair 16 sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --recurse-submodules --branch 16-dev https://github.com/LawnchairLauncher/lawnchair.git upstream-lawnchair
+          git -C upstream-lawnchair fetch --depth 1 origin fc100ae9095a83b8b51c447a3b0a4ce2b399ad59
+          git -C upstream-lawnchair checkout fc100ae9095a83b8b51c447a3b0a4ce2b399ad59
+          git -C upstream-lawnchair submodule update --init --recursive --depth 1
+          test "$(git -C upstream-lawnchair rev-parse HEAD)" = fc100ae9095a83b8b51c447a3b0a4ce2b399ad59
+      - name: Apply Huy Launcher 2 patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 huy-launcher-2/apply_huy2.py upstream-lawnchair
+          git -C upstream-lawnchair diff --check
+          grep -q 'addHuyFolderBackgroundBlur(animatorSet, true)' upstream-lawnchair/src/com/android/launcher3/folder/Folder.java
+          grep -q 'addHuyFolderBackgroundBlur(animatorSet, false)' upstream-lawnchair/src/com/android/launcher3/folder/Folder.java
+      - name: Compile only (never publish test-signed APK)
+        shell: bash
+        working-directory: upstream-lawnchair
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleLawnWithQuickstepPlayDebug --stacktrace
+      - name: Confirm source build succeeded
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(find upstream-lawnchair/build/outputs/apk -name '*.apk' -type f | wc -l)" -eq 1
+          echo "Source build passed. Test-signed APK deliberately not uploaded."
