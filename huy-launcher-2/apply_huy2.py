@@ -138,11 +138,24 @@ change("AndroidManifest-common.xml",
        "")
 
 change("build.gradle", 'applicationId "app.lawnchair.play"',
-       'applicationId "app.huy.androidlauncher2.preview"')
+       'applicationId "app.huy.androidlauncher2"')
+# The first installed Launcher 2 is app.huy.androidlauncher2.debug and was signed
+# with a disposable GitHub-runner debug key. We cannot upgrade it in place.
+# Keep its data untouched during backup/migration by using app.huy.androidlauncher2
+# (no debug suffix) for the permanently signed installation. Future APKs from
+# the same signing key and package will update in place.
+change("build.gradle", 'applicationIdSuffix ".debug"',
+       'applicationIdSuffix ""')
+
+# GitHub Actions run_number monotonically increases on each build. This helps
+# Android recognize future releases as updates, not downgrades.
+change("build.gradle", "versionCode 16_00_02_01_00",
+       'versionCode (16_00_02_01_00 + (System.getenv("GITHUB_RUN_NUMBER") ?: "0").toInteger())')
+
 change("build.gradle", 'resValue("string", "derived_app_name", "Lawnchair (Debug)")',
        'resValue("string", "derived_app_name", "Huy android launcher 2")')
 change("build.gradle", 'resValue("string", "derived_app_name", "Lawnchair")',
        'resValue("string", "derived_app_name", "Huy android launcher 2")')
 
 print("Ready to build: ./gradlew assembleLawnWithQuickstepPlayDebug")
-print("Expected package: app.huy.androidlauncher2.preview.debug")
+print("Expected package: app.huy.androidlauncher2")
