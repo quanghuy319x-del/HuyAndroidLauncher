@@ -77,7 +77,7 @@ change(prefs,
 # Lawnchair upstream currently requests an unreleased 37.2 platform.
 gradle = "build.gradle"
 change(gradle, 'buildToolsVersion "37.0.0"', 'buildToolsVersion "36.0.0"')
-change(gradle, 'compileSdk {\\n                version = release(37) {\\n                    minorApiLevel = 2\\n                }\\n            }', 'compileSdk 36')
+change(gradle, 'compileSdk {\n                version = release(37) {\n                    minorApiLevel = 2\n                }\n            }', 'compileSdk 36')
 change(gradle, 'targetSdk = 37', 'targetSdk = 36')
 
 print("Complete. Select Deck once in Settings > Home screen to populate all apps.")
