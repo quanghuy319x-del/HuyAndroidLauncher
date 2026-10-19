@@ -1,11 +1,8 @@
 name: Verify Huy Launcher 2 source changes
 
+# This optional second full compilation is manual-only.
+# The primary Huy 2 workflow already compiles and checks every source change.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'huy-launcher-2/**'
-      - '.github/workflows/huy-launcher-2-source-check.yml'
   workflow_dispatch:
 
 permissions:
