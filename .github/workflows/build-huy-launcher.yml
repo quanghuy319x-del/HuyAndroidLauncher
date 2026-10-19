@@ -1,0 +1,112 @@
+name: Build Huy android launcher
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'huy-launcher/**'
+      - '.github/workflows/build-huy-launcher.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout Huy source patch
+        uses: actions/checkout@v4
+
+      - name: Configure Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '21'
+
+      - name: Prepare official Android SDK 36.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$ANDROID_HOME"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          "$SDKMANAGER" --channel=3 'platforms;android-36.1' 'build-tools;36.1.0'
+          test -f "$ANDROID_HOME/platforms/android-36.1/android.jar"
+          test -x "$ANDROID_HOME/build-tools/36.1.0/apksigner"
+
+      - name: Setup official Gradle wrapper and dependency cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Checkout pinned Lawnchair 15 Beta 3 source with submodules
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --branch v15.0.0-beta3.0 --depth 1 --recurse-submodules \
+            https://github.com/LawnchairLauncher/lawnchair.git lawnchair
+          actual="$(git -C lawnchair rev-parse HEAD)"
+          expected="505dbc40e6154c05158b5d0271c45f6a885a411b"
+          echo "Lawnchair checkout: $actual"
+          test "$actual" = "$expected"
+
+      - name: Apply 3x3 folder preview and launcher name
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 huy-launcher/apply_huy.py lawnchair
+          git -C lawnchair diff --check
+          git -C lawnchair diff --stat
+
+      - name: Configure optional stable APK signing
+        shell: bash
+        env:
+          HUY_KEYSTORE_BASE64: ${{ secrets.HUY_KEYSTORE_BASE64 }}
+          HUY_KEYSTORE_PASSWORD: ${{ secrets.HUY_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$HUY_KEYSTORE_BASE64" && -n "$HUY_KEYSTORE_PASSWORD" ]]; then
+            printf '%s' "$HUY_KEYSTORE_BASE64" | base64 --decode > lawnchair/huy-keystore.p12
+            {
+              echo 'storeFile=huy-keystore.p12'
+              echo 'keyAlias=huylauncher'
+              printf 'storePassword=%s\n' "$HUY_KEYSTORE_PASSWORD"
+              printf 'keyPassword=%s\n' "$HUY_KEYSTORE_PASSWORD"
+            } > lawnchair/keystore.properties
+            chmod 600 lawnchair/keystore.properties lawnchair/huy-keystore.p12
+            echo "Using stable signing keystore from GitHub Actions secrets."
+          else
+            echo "Using Android Gradle Plugin debug signing certificate."
+            echo "Warning: future runs may have a different debug certificate."
+          fi
+
+      - name: Build with Android Gradle Plugin
+        working-directory: lawnchair
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew --no-daemon assembleLawnWithQuickstepPlayDebug --stacktrace
+
+      - name: Verify package name, signature and APK output
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' apks < <(find lawnchair/build/outputs/apk -type f -name '*.apk' -print0)
+          test "${#apks[@]}" -eq 1
+          apk="${apks[0]}"
+          "$ANDROID_HOME/build-tools/36.1.0/apksigner" verify --verbose --print-certs "$apk"
+          "$ANDROID_HOME/build-tools/36.1.0/aapt" dump badging "$apk" | tee apk-info.txt
+          grep -F "name='app.huy.androidlauncher.debug'" apk-info.txt
+          grep -F "application-label:'Huy android launcher'" apk-info.txt
+          sha256sum "$apk" | tee APK-SHA256.txt
+          mkdir -p output
+          cp "$apk" output/Huy-android-launcher.apk
+          cp APK-SHA256.txt output/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Huy-android-launcher-APK
+          path: output/*
+          if-no-files-found: error
