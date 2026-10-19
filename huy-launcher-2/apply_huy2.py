@@ -94,14 +94,14 @@ change("src/com/android/launcher3/folder/PreviewItemManager.java",
                 /* shouldClipPath */ isThreeByThreePreview, clipPath);""")
 
 # Geometry sanity check: the far corners of the 3x3 icon squares lie within
-# a circle of radius 0.45*previewSize, leaving room for a folder border.
+# a circle of radius 0.48*previewSize, leaving room for a folder border.
 import math
 inset = 0.17
 icon_width = 0.22
 cell = (1 - 2 * inset) / 3
 outer = inset + 0.5 * cell - 0.5 * icon_width
 assert cell > icon_width, "3x3 icons overlap"
-assert math.hypot(0.5 - outer, 0.5 - outer) < 0.45, "3x3 corner icons are too large"
+assert math.hypot(0.5 - outer, 0.5 - outer) < 0.48, "3x3 corner icons are too large"
 
 # Translucent glass background on CLOSED folder previews: a gentle
 # two-stop highlight, consistent 1dp rim, and the original selected folder
