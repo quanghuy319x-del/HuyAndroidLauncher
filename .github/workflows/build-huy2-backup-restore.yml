@@ -1,4 +1,4 @@
-name: Build Huy Launcher 2 glass permanent package
+name: Build Huy Launcher 2 optimized APK
 
 on:
   workflow_dispatch:
@@ -10,6 +10,11 @@ on:
 
 permissions:
   contents: read
+
+# Superseded commits do not need to consume 5 minutes of Gradle compilation.
+concurrency:
+  group: huy2-apk-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-apk:
@@ -39,6 +44,19 @@ jobs:
           git -C upstream-lawnchair checkout fc100ae9095a83b8b51c447a3b0a4ce2b399ad59
           git -C upstream-lawnchair submodule update --init --recursive --depth 1
           test "$(git -C upstream-lawnchair rev-parse HEAD)" = fc100ae9095a83b8b51c447a3b0a4ce2b399ad59
+      - name: Restore incremental Android build outputs
+        uses: actions/cache@v4
+        with:
+          # Whole build tree includes Kotlin incremental state and generated
+          # outputs; gradle/actions/setup-gradle independently caches
+          # Gradle dependencies and relocatable Gradle task cache.
+          path: |
+            upstream-lawnchair/.gradle
+            upstream-lawnchair/build
+          key: huy2-incremental-${{ runner.os }}-lawnchair16-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            huy2-incremental-${{ runner.os }}-lawnchair16-
+
       - name: Apply Launcher 2 folder blur and preview changes
         shell: bash
         run: |
@@ -54,7 +72,7 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x gradlew
-          ./gradlew --no-daemon assembleLawnWithQuickstepPlayDebug --stacktrace
+          ./gradlew --no-daemon --build-cache --parallel --max-workers=4 assembleLawnWithQuickstepPlayDebug --stacktrace
       - name: Check signature and permissions
         shell: bash
         run: |
@@ -74,9 +92,50 @@ jobs:
           mkdir -p output
           cp "$apk" output/Huy_android_launcher_2_glass_intermediate.apk
           sha256sum output/Huy_android_launcher_2_glass_intermediate.apk > output/SHA256.txt
-      - name: Upload backup-restore install package
+      - name: Sign release automatically if private GitHub secrets exist
+        shell: bash
+        env:
+          HUY2_KEYSTORE_BASE64: ${{ secrets.HUY2_KEYSTORE_BASE64 }}
+          HUY2_KEYSTORE_PASSWORD: ${{ secrets.HUY2_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          src="output/Huy_android_launcher_2_glass_intermediate.apk"
+          if [[ -z "$HUY2_KEYSTORE_BASE64" || -z "$HUY2_KEYSTORE_PASSWORD" ]]; then
+            echo "RELEASE_VARIANT=DEBUG-INTERMEDIATE" >> "$GITHUB_ENV"
+            echo "### Debug intermediate only" >> "$GITHUB_STEP_SUMMARY"
+            echo "Permanent signing secrets are not configured. Do NOT install this intermediate over the permanently signed Launcher 2." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          key="$RUNNER_TEMP/huy2-permanent.p12"
+          trap 'rm -f "$key"' EXIT
+          printf '%s' "$HUY2_KEYSTORE_BASE64" | base64 --decode > "$key"
+          chmod 600 "$key"
+          out="output/Huy_android_launcher_2_PERMANENT_UPDATE.apk"
+          signer="$ANDROID_HOME/build-tools/37.0.0/apksigner"
+          "$signer" sign --ks "$key" --ks-type PKCS12 \
+            --ks-key-alias huylauncher2 \
+            --ks-pass env:HUY2_KEYSTORE_PASSWORD \
+            --key-pass env:HUY2_KEYSTORE_PASSWORD \
+            --v2-signing-enabled true --v3-signing-enabled true \
+            --out "$out" "$src"
+          "$signer" verify --verbose "$out"
+          actual=$("$signer" verify --print-certs "$out" | awk -F ': ' '/certificate SHA-256 digest/ {print $NF; exit}' | tr -d '\r' | tr '[:upper:]' '[:lower:]')
+          expected="36758c6fe2a6cee38c81f2b42f868119b29a5f173e8015cb03ab440c467751d0"
+          test "$actual" = "$expected" || {
+            echo "ERROR: Permanent signing certificate mismatch" >&2
+            exit 1
+          }
+          "$ANDROID_HOME/build-tools/37.0.0/aapt" dump badging "$out" | grep -F "name='app.huy.androidlauncher2'"
+          rm -f "$src" output/SHA256.txt
+          sha256sum "$out" > output/SHA256.txt
+          echo "RELEASE_VARIANT=PERMANENT-SIGNED" >> "$GITHUB_ENV"
+          echo "### Permanent APK update verified" >> "$GITHUB_STEP_SUMMARY"
+          echo "Same Launcher 2 package and pinned signing certificate; in-place updates retain app data." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload verified APK or clearly labeled intermediate
         uses: actions/upload-artifact@v4
         with:
-          name: Huy-Launcher-2-glass-intermediate
+          name: Huy-Launcher-2-${{ env.RELEASE_VARIANT }}-APK
           path: output/*
           if-no-files-found: error
