@@ -340,20 +340,56 @@ block('    private void showItemActions(String key) {','    private void openApp
     }
 
 ''')
-block('    private void showDockPreferences() {','    private void showFolderPreferences()', '''    private void showDockPreferences() {
+block('    private void showSettings() {','    private void saveToggle(','''    private void showSettings() {
+        showActionSheet("Pixel Home settings",new String[]{
+            "Home screen","Dock & search","Folders","Appearance & fonts",
+            "Gestures & animations","Widgets","Hidden apps","Default Home app","Reset layout"
+        },i->{
+            switch(i){
+                case 0: showActionSheet("Home screen",new String[]{
+                    "Grid · "+columns+"×"+rows,
+                    "Show date · "+(showDateHeader?"On":"Off"),"Edit home screen"},j->{
+                        if(j==0)showGridSettings();
+                        else if(j==1)saveToggle("show_date_header",showDateHeader=!showDateHeader);
+                        else changeEditing(true);
+                    });break;
+                case 1: showDockPreferences();break;
+                case 2: showActionSheet("Folders",new String[]{
+                    "Folder previews · 3×3","Spring animation · "+(folderSpring?"On":"Off")},j->{
+                        if(j==1)saveToggle("folder_spring",folderSpring=!folderSpring);
+                    });break;
+                case 3: showActionSheet("Appearance & fonts",new String[]{
+                    "Choose label font · "+labelFont+" "+labelSizeSp+" sp",
+                    "Wallpaper & style","Wallpaper dim · "+wallpaperDim+"%"},j->{
+                        if(j==0)showFontSettings();else if(j==1)showWallpaperPicker();
+                        else showDimSetting();
+                    });break;
+                case 4: showActionSheet("Gestures & animations",new String[]{
+                    "Swipe down search · "+(swipeDownSearch?"On":"Off"),
+                    "Reduce motion · "+(reduceMotion?"On":"Off"),"Edit mode"},j->{
+                        if(j==0)saveToggle("swipe_down_search",swipeDownSearch=!swipeDownSearch);
+                        else if(j==1)saveToggle("reduce_motion",reduceMotion=!reduceMotion);
+                        else changeEditing(true);
+                    });break;
+                case 5: showWidgetPicker();break;
+                case 6: showHiddenApps();break;
+                case 7: openHomeSettings();break;
+                case 8: confirmResetLayout();break;
+            }
+        });
+    }
+    private void showDockPreferences() {
         showActionSheet("Dock & search",new String[]{
             "Dock style · "+dockStyle,"Dock icons · "+dockSlots+" (3–9)",
             "Dock folders · Drag an app onto another",
-            "Search bar · "+(showSearchBar?"On":"Off"),
-            "Search apps now","Default Home app"
+            "Search bar · "+(showSearchBar?"On":"Off"),"Search apps now"
         },index->{
             if(index==0){
                 String[] styles={"Pixel","Pill","Outline"};
                 new AlertDialog.Builder(this).setTitle("Dock style")
                     .setSingleChoiceItems(styles,Arrays.asList(styles).indexOf(dockStyle),
                     (d,choice)->{
-                        dockStyle=styles[choice];
-                        prefs.edit().putString("dock_style",dockStyle).apply();
+                        dockStyle=styles[choice];prefs.edit().putString("dock_style",dockStyle).apply();
                         d.dismiss();refreshScreen();
                     }).show();
             }else if(index==1){
@@ -369,20 +405,12 @@ block('    private void showDockPreferences() {','    private void showFolderPre
             }else if(index==2)new AlertDialog.Builder(this)
                 .setMessage("Drag one app onto the center of another dock icon to create a folder. Drag apps onto that folder to add more.")
                 .setPositiveButton("OK",null).show();
-            else if(index==3)togglePreference("show_search_bar",showSearchBar=!showSearchBar);
-            else if(index==4)showSearch();
-            else openHomeSettings();
+            else if(index==3)saveToggle("show_search_bar",showSearchBar=!showSearchBar);
+            else showSearch();
         });
     }
 
 ''')
-replace('''"Gestures & animations", "Widgets", "Default Home app", "Reset layout"''',
-        '''"Gestures & animations", "Widgets", "Hidden apps", "Default Home app", "Reset layout"''')
-replace('''                case 6: openHomeSettings(); break;
-                case 7: confirmResetLayout(); break;''',
-'''                case 6: showHiddenApps(); break;
-                case 7: openHomeSettings(); break;
-                case 8: confirmResetLayout(); break;''')
 replace('''home.clear(); dock.clear();
                     for (String id : installed.keySet()) home.add(new Item(id));''',
 '''home.clear(); dock.clear(); dockFolders.clear();
