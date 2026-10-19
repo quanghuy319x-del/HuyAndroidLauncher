@@ -337,6 +337,25 @@ change("quickstep/src/com/android/launcher3/uioverrides/QuickstepLauncher.java",
 
     public DepthController getDepthController() {""")
 
+# Huy Launcher 2 should never shrink or zoom the HOME backdrop when a
+# folder opens. Android's folder spring scales workspace/hotseat to 97.5%;
+# use 100% for those targets, while leaving the folder's own reveal intact.
+change("src/com/android/launcher3/folder/FolderSpringAnimatorSet.kt",
+       "        private const val LAUNCHER_SCALE = 0.975f",
+       "        private const val LAUNCHER_SCALE = 1f")
+
+# The native SurfaceControl blur path also changes wallpaper zoom through
+# BaseDepthController.applyDepthAndBlurInternal(). Suppress wallpaper zoom
+# only while applying our folder-specific blur, not for recents/All Apps.
+change("quickstep/src/com/android/quickstep/util/BaseDepthController.java",
+       "    protected boolean mPauseBlurs;",
+       """    protected boolean mPauseBlurs;
+    /** Keep the wallpaper at its original size during folder-only backdrop blur. */
+    protected boolean mHuySkipWallpaperZoomForFolder;""")
+change("quickstep/src/com/android/quickstep/util/BaseDepthController.java",
+       "        if (windowToken != null && Utilities.ATLEAST_R) {",
+       "        if (windowToken != null && Utilities.ATLEAST_R && !mHuySkipWallpaperZoomForFolder) {")
+
 # The public widgetDepth multiproperty is used for workspace/recents transitions.
 # Reuse that existing wallpaper-surface blur path for folders rather than relying
 # on FLAG_BLUR_BEHIND or trying to read protected wallpaper pixels.
@@ -354,10 +373,17 @@ change("quickstep/src/com/android/launcher3/statehandlers/DepthController.java",
             ensureDependencies();
             mCrossWindowBlursEnabled =
                     CrossWindowBlurListeners.getInstance().isCrossWindowBlurEnabled();
-            widgetDepth.setValue(Math.max(0f, Math.min(0.32f, fraction)));
-            // The user may have disabled Lawnchair's normal depth preference;
-            // folder blurring is a separate opt-in feature, so apply directly.
-            super.applyDepthAndBlur();
+            // Suppress wallpaper zoom during both depth property callbacks
+            // and the forced native blur apply. No zoom-out on folder opening.
+            mHuySkipWallpaperZoomForFolder = true;
+            try {
+                widgetDepth.setValue(Math.max(0f, Math.min(0.32f, fraction)));
+                // The user may have disabled Lawnchair's normal depth preference;
+                // folder blurring is independent and still applies natively.
+                super.applyDepthAndBlur();
+            } finally {
+                mHuySkipWallpaperZoomForFolder = false;
+            }
             // mCurrentBlur alone does not prove wallpaper blur is drawn.
             // On some devices the SurfaceControl is absent/invalid, leaving
             // the wallpaper sharp while only widgets are blurred.
