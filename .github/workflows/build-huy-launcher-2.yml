@@ -2,11 +2,6 @@ name: Build Huy android launcher 2 (Lawnchair 16)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'huy-launcher-2/**'
-      - '.github/workflows/build-huy-launcher-2.yml'
 
 permissions:
   contents: read
@@ -57,26 +52,26 @@ jobs:
           git -C upstream-lawnchair diff --check
           git -C upstream-lawnchair diff --stat
 
-      - name: Configure signing if private secrets are available
+      - name: Require permanent signing key (no ephemeral debug builds)
         shell: bash
         env:
           HUY2_KEYSTORE_BASE64: ${{ secrets.HUY2_KEYSTORE_BASE64 }}
           HUY2_KEYSTORE_PASSWORD: ${{ secrets.HUY2_KEYSTORE_PASSWORD }}
         run: |
           set -euo pipefail
-          if [[ -n "$HUY2_KEYSTORE_BASE64" && -n "$HUY2_KEYSTORE_PASSWORD" ]]; then
-            printf '%s' "$HUY2_KEYSTORE_BASE64" | base64 --decode > upstream-lawnchair/huy2-keystore.p12
-            {
-              echo 'storeFile=huy2-keystore.p12'
-              echo 'keyAlias=huylauncher2'
-              printf 'storePassword=%s\n' "$HUY2_KEYSTORE_PASSWORD"
-              printf 'keyPassword=%s\n' "$HUY2_KEYSTORE_PASSWORD"
-            } > upstream-lawnchair/keystore.properties
-            chmod 600 upstream-lawnchair/huy2-keystore.p12 upstream-lawnchair/keystore.properties
-            echo "Using saved stable signing key"
-          else
-            echo "Using ephemeral debug signing; future updates may require uninstall."
+          if [[ -z "$HUY2_KEYSTORE_BASE64" || -z "$HUY2_KEYSTORE_PASSWORD" ]]; then
+            echo "ERROR: Add HUY2_KEYSTORE_BASE64 and HUY2_KEYSTORE_PASSWORD repository Actions secrets before building."
+            exit 1
           fi
+          printf '%s' "$HUY2_KEYSTORE_BASE64" | base64 --decode > upstream-lawnchair/huy2-keystore.p12
+          {
+            echo 'storeFile=huy2-keystore.p12'
+            echo 'keyAlias=huylauncher2'
+            printf 'storePassword=%s\n' "$HUY2_KEYSTORE_PASSWORD"
+            printf 'keyPassword=%s\n' "$HUY2_KEYSTORE_PASSWORD"
+          } > upstream-lawnchair/keystore.properties
+          chmod 600 upstream-lawnchair/huy2-keystore.p12 upstream-lawnchair/keystore.properties
+          echo "Using saved stable signing key"
 
       - name: Compile Lawnchair 16 with official Gradle plugin
         shell: bash
@@ -95,8 +90,18 @@ jobs:
           apk="${apks[0]}"
           "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$apk"
           "$ANDROID_HOME/build-tools/37.0.0/aapt" dump badging "$apk" > apk-info.txt
-          grep -F "name='app.huy.androidlauncher2.preview.debug'" apk-info.txt
+          grep -F "name='app.huy.androidlauncher2'" apk-info.txt
           grep -F "application-label:'Huy android launcher 2'" apk-info.txt
+          keytool -list -v -storetype PKCS12 -keystore upstream-lawnchair/huy2-keystore.p12 -alias huylauncher2 -storepass "$HUY2_KEYSTORE_PASSWORD" > expected-signer.txt
+          apk_cert=$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs "$apk" | grep 'Signer #1 certificate SHA-256 digest' | head -n 1 | tr -d '\r' | sed 's/.*: *//')
+          expected_cert=$(grep 'SHA256:' expected-signer.txt | head -n 1 | sed 's/.*SHA256: *//' | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          test -n "$apk_cert"
+          test -n "$expected_cert"
+          if [[ "$apk_cert" != "$expected_cert" ]]; then
+            echo "ERROR: APK signature differs from permanent key."
+            exit 1
+          fi
+          echo "PASS: APK signed using the permanent release certificate."
           "$ANDROID_HOME/build-tools/37.0.0/aapt" dump xmltree "$apk" AndroidManifest.xml > merged-manifest.txt
           if grep -E 'BIND_ACCESSIBILITY_SERVICE|BIND_NOTIFICATION_LISTENER_SERVICE|ACCESS_RESTRICTED_SETTINGS' merged-manifest.txt; then
             echo "ERROR: Risk-sensitive permission or service still declared"
@@ -104,12 +109,12 @@ jobs:
           fi
           echo "PASS: No AccessibilityService, NotificationListener or restricted-settings declaration."
           mkdir -p output
-          cp "$apk" output/Huy_android_launcher_2.apk
-          sha256sum output/Huy_android_launcher_2.apk > output/SHA256.txt
+          cp "$apk" output/Huy_android_launcher_2_stable.apk
+          sha256sum output/Huy_android_launcher_2_stable.apk > output/SHA256.txt
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: Huy-android-launcher-2-APK
+          name: Huy-android-launcher-2-STABLE-APK
           path: output/*
           if-no-files-found: error
