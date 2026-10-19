@@ -36,7 +36,7 @@ jobs:
           echo "SDK installed at $ANDROID_HOME"
           SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)
           test -n "$SDKMANAGER"
-          "$SDKMANAGER" 'platforms;android-36' 'build-tools;36.0.0'
+          "$SDKMANAGER" --channel=3 'platforms;android-37.2' 'build-tools;37.0.0'
       - name: Setup Gradle cache
         uses: gradle/actions/setup-gradle@v4
       - name: Compile official Lawnchair engine with custom patch
