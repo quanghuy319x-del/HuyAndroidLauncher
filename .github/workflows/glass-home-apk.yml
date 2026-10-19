@@ -36,13 +36,13 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: GlassHome-v3-debug-apk
+          name: PixelHome-v4-debug-apk
           path: glass-home-launcher/project/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
       - name: Upload editable source and preview
         uses: actions/upload-artifact@v4
         with:
-          name: GlassHome-v3-source-preview
+          name: PixelHome-v4-source-preview
           path: |
             glass-home-launcher/project/PREVIEW.html
             glass-home-launcher/project/README.md
