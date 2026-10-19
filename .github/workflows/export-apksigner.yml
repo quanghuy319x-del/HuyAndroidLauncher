@@ -1,0 +1,33 @@
+name: Export official Android APK signing tools
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/export-apksigner.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export-signer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Install official Android Build Tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'build-tools;37.0.0'
+          test -f "$ANDROID_HOME/build-tools/37.0.0/lib/apksigner.jar"
+          mkdir -p out
+          cp "$ANDROID_HOME/build-tools/37.0.0/lib/apksigner.jar" out/apksigner.jar
+          java -jar out/apksigner.jar --version
+          sha256sum out/apksigner.jar > out/SHA256.txt
+      - name: Export signer (public Android SDK tool only, no private keys)
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-tools-apksigner-37
+          path: out/*
+          if-no-files-found: error
