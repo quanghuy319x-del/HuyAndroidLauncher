@@ -163,6 +163,27 @@ change(organizer, "private static final int PREVIEW_MAX_ROWS = 2;",
 change(organizer, "private static final int PREVIEW_MAX_COLUMNS = 2;",
        "private static final int PREVIEW_MAX_COLUMNS = 3;")
 
+change(organizer, '        mMaxItemsPerPage = mMaxCountX * mMaxCountY;',
+       '        mMaxItemsPerPage = Math.min(3, mMaxCountX) * Math.min(3, mMaxCountY);')
+
+# Always use fixed three-column placement in the opened folder.
+# For example: 4 apps -> 3 + 1, 5 -> 3 + 2, 9 -> 3 + 3 + 3.
+# Ten or more apps use the normal folder paging mechanism (9 per page).
+change(organizer,
+       "    private void calculateGridSize(int count) {\n        boolean done;\n        int gridCountX = mCountX;\n        int gridCountY = mCountY;\n\n        if (count >= mMaxItemsPerPage) {\n            gridCountX = mMaxCountX;\n            gridCountY = mMaxCountY;\n            done = true;\n        } else {\n            done = false;\n        }\n\n        while (!done) {\n            int oldCountX = gridCountX;\n            int oldCountY = gridCountY;\n            if (gridCountX * gridCountY < count) {\n                // Current grid is too small, expand it\n                if ((gridCountX <= gridCountY || gridCountY == mMaxCountY)\n                        && gridCountX < mMaxCountX) {\n                    gridCountX++;\n                } else if (gridCountY < mMaxCountY) {\n                    gridCountY++;\n                }\n                if (gridCountY == 0) gridCountY++;\n            } else if ((gridCountY - 1) * gridCountX >= count && gridCountY >= gridCountX) {\n                gridCountY = Math.max(0, gridCountY - 1);\n            } else if ((gridCountX - 1) * gridCountY >= count) {\n                gridCountX = Math.max(0, gridCountX - 1);\n            }\n            done = gridCountX == oldCountX && gridCountY == oldCountY;\n        }\n\n        mCountX = gridCountX;\n        mCountY = gridCountY;\n    }",
+       "    private void calculateGridSize(int count) {\n        // Huy Launcher 2: use the same left-to-right three-column arrangement\n        // as the closed folder's preview. Never make 4 items into a 2x2 grid.\n        final int columns = Math.max(1, Math.min(3, mMaxCountX));\n        final int maxRows = Math.max(1, Math.min(3, mMaxCountY));\n        final int itemsOnPage = Math.min(Math.max(0, count), mMaxItemsPerPage);\n        mCountX = columns;\n        mCountY = Math.min(maxRows,\n                Math.max(1, (itemsOnPage + columns - 1) / columns));\n    }")
+
+# Pure algorithm assertions: visible positions are row-major in groups of 3.
+for item_count, expected_rows in {1: [1], 2: [2], 3: [3], 4: [3, 1],
+                                  5: [3, 2], 6: [3, 3], 7: [3, 3, 1],
+                                  9: [3, 3, 3], 10: [3, 3, 3, 1]}.items():
+    pages = [list(range(p, min(p + 9, item_count)))
+             for p in range(0, item_count, 9)]
+    actual_rows = []
+    for page in pages:
+        actual_rows.extend(len(page[i:i+3]) for i in range(0, len(page), 3))
+    assert actual_rows == expected_rows, (item_count, actual_rows)
+
 # Match the successful Huy Launcher 1 privacy fix: no notification listener,
 # accessibility service, or ACCESS_RESTRICTED_SETTINGS in the merged manifest.
 change("AndroidManifest-common.xml",
