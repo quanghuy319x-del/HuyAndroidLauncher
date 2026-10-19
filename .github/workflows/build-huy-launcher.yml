@@ -99,6 +99,12 @@ jobs:
           "$ANDROID_HOME/build-tools/36.1.0/aapt" dump badging "$apk" | tee apk-info.txt
           grep -F "name='app.huy.androidlauncher.debug'" apk-info.txt
           grep -F "application-label:'Huy android launcher'" apk-info.txt
+          "$ANDROID_HOME/build-tools/36.1.0/aapt" dump xmltree "$apk" AndroidManifest.xml > merged-manifest.txt
+          if grep -E 'BIND_ACCESSIBILITY_SERVICE|BIND_NOTIFICATION_LISTENER_SERVICE|ACCESS_RESTRICTED_SETTINGS' merged-manifest.txt; then
+            echo "ERROR: risk-sensitive component or permission is still declared."
+            exit 1
+          fi
+          echo "PASS: No AccessibilityService, NotificationListener, or restricted-settings permission."
           sha256sum "$apk" | tee APK-SHA256.txt
           mkdir -p output
           cp "$apk" output/Huy-android-launcher.apk
