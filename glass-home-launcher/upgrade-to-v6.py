@@ -411,14 +411,10 @@ block('    private void showSettings() {','    private void saveToggle(','''    
     }
 
 ''')
-replace('''home.clear(); dock.clear();
-                    for (String id : installed.keySet()) home.add(new Item(id));''',
-'''home.clear(); dock.clear(); dockFolders.clear();
-                    for (String id : installed.keySet()) if(!hiddenApps.contains(id)) home.add(new Item(id));''')
-replace('''                                if (folder.children.isEmpty()) home.remove(folder);''',
-'''                                if(folder.children.isEmpty()){
-                                    home.remove(folder);dock.remove(folder.id);dockFolders.remove(folder.id);
-                                }''') if '                                if (folder.children.isEmpty()) home.remove(folder);' in s else None
+replace('                    home.clear(); dock.clear();',
+        '                    home.clear(); dock.clear(); dockFolders.clear();')
+replace('                    for(String id:installed.keySet()) home.add(new Item(id));',
+        '                    for(String id:installed.keySet()) if(!hiddenApps.contains(id)) home.add(new Item(id));')
 
 p.write_text(s)
 gradle=Path(sys.argv[1])/"app/build.gradle"
