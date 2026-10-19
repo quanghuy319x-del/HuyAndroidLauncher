@@ -1,0 +1,45 @@
+name: Build Pixel Home v6 (side by side)
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/pixelhome-v6-separate-apk.yml'
+      - 'glass-home-launcher/side-by-side-v6.py'
+      - 'glass-home-launcher/upgrade-to-v5.py'
+      - 'glass-home-launcher/upgrade-to-v6.py'
+      - 'glass-home-launcher/source.tar.xz'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore project and apply v5 and v6 features
+        run: |
+          mkdir -p build-project
+          tar -xJf glass-home-launcher/source.tar.xz -C build-project
+          python3 glass-home-launcher/upgrade-to-v5.py build-project
+          python3 glass-home-launcher/upgrade-to-v6.py build-project
+          python3 glass-home-launcher/side-by-side-v6.py build-project
+          grep "applicationId 'dev.glasshome.pixelhome6'" build-project/app/build.gradle
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK
+        run: |
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)
+          "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build standalone installer
+        run: gradle --no-daemon -p build-project assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PixelHome-v6-standalone-installer
+          path: build-project/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
