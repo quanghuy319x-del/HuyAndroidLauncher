@@ -878,7 +878,7 @@ change(home_list,
             context.launcher.workspace?.mapOverItems { item, _ ->
                 when (item) {
                     is WorkspaceItemInfo -> recordHomeScreenApp(item)
-                    is FolderInfo -> item.appContents.forEach(::recordHomeScreenApp)
+                    is FolderInfo -> item.getAppContents().forEach(::recordHomeScreenApp)
                 }
                 false
             }
