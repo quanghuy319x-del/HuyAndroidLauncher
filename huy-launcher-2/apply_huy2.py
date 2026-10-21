@@ -797,5 +797,127 @@ change("build.gradle", 'resValue("string", "derived_app_name", "Lawnchair (Debug
 change("build.gradle", 'resValue("string", "derived_app_name", "Lawnchair")',
        'resValue("string", "derived_app_name", "Huy android launcher 2")')
 
+
+# Hide duplicate app icons from the normal drawer when those apps already
+# exist on the home screen, dock or inside a home-screen folder.
+# This does NOT remove, uninstall, move or persistently hide any app.
+# Default OFF, switch located in Settings > App drawer > General.
+change("lawnchair/src/app/lawnchair/preferences2/PreferenceManager2.kt",
+       """    val hiddenApps = preference(
+        key = stringSetPreferencesKey(name = "hidden_apps"),
+        defaultValue = setOf(),
+    )""",
+       """    val hiddenApps = preference(
+        key = stringSetPreferencesKey(name = "hidden_apps"),
+        defaultValue = setOf(),
+    )
+
+    val hideHomeAppsInDrawer = preference(
+        key = booleanPreferencesKey(name = "huy_hide_home_apps_in_drawer"),
+        defaultValue = false,
+    )""")
+
+change("lawnchair/src/app/lawnchair/ui/preferences/destinations/AppDrawerPreferences.kt",
+       """            SearchBarPreference(SearchRoute.DRAWER_SEARCH, showLabel = false)""",
+       """            SwitchPreference(
+                label = "Hide apps already on home screen",
+                description = "Also includes dock and home-screen folders. Apps stay available in search.",
+                adapter = prefs2.hideHomeAppsInDrawer.getAdapter(),
+            )
+            SearchBarPreference(SearchRoute.DRAWER_SEARCH, showLabel = false)""")
+
+# The list already owns Lawnchair's hidden-app and custom drawer-folder
+# filtering; extend it here rather than globally modifying the app store.
+# Keep drawer search intact so an app can always be found via search.
+home_list = "lawnchair/src/app/lawnchair/allapps/LawnchairAlphabeticalAppsList.kt"
+change(home_list,
+       "import com.android.launcher3.InvariantDeviceProfile.OnIDPChangeListener",
+       """import com.android.launcher3.InvariantDeviceProfile.OnIDPChangeListener
+import com.android.launcher3.LauncherSettings
+import com.android.launcher3.model.data.WorkspaceItemInfo""")
+
+change(home_list,
+       """    private var hiddenApps: Set<String> = setOf()
+    private val prefs2 = PreferenceManager2.getInstance(context)""",
+       """    private var hiddenApps: Set<String> = setOf()
+    private var hideHomeAppsInDrawer = false
+    private val homeScreenApps = mutableSetOf<String>()
+    private val prefs2 = PreferenceManager2.getInstance(context)""")
+
+change(home_list,
+       """        observeFolders()
+    }
+
+    override fun onDestroy(owner: LifecycleOwner) {""",
+       """        try {
+            prefs2.hideHomeAppsInDrawer.onEach(launchIn = context.launcher.lifecycleScope) {
+                hideHomeAppsInDrawer = it
+                onAppsUpdated()
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to observe home-screen app filter", t)
+        }
+        observeFolders()
+    }
+
+    override fun onDestroy(owner: LifecycleOwner) {""")
+
+change(home_list,
+       """    override fun updateItemFilter(itemFilter: Predicate<ItemInfo>?) {""",
+       """    private fun recordHomeScreenApp(item: WorkspaceItemInfo) {
+        if (item.itemType != LauncherSettings.Favorites.ITEM_TYPE_APPLICATION) return
+        val component = item.targetComponent ?: return
+        homeScreenApps.add(ComponentKey(component, item.user).toString())
+    }
+
+    override fun onAppsUpdated() {
+        homeScreenApps.clear()
+        if (hideHomeAppsInDrawer) {
+            // mapOverItems covers ALL home screens and the hotseat, not
+            // just the currently visible page; folder children are included.
+            context.launcher.workspace?.mapOverItems { item, _ ->
+                when (item) {
+                    is WorkspaceItemInfo -> recordHomeScreenApp(item)
+                    is FolderInfo -> item.appContents.forEach(::recordHomeScreenApp)
+                }
+                false
+            }
+        }
+        super.onAppsUpdated()
+    }
+
+    override fun updateItemFilter(itemFilter: Predicate<ItemInfo>?) {""")
+
+change(home_list,
+       """            (itemFilter?.test(info) != false) && !hiddenApps.contains(componentKey)""",
+       """            (itemFilter?.test(info) != false) &&
+                !hiddenApps.contains(componentKey) &&
+                (!hideHomeAppsInDrawer || !homeScreenApps.contains(componentKey))""")
+
+# User-created app-drawer folders also resolve apps directly from the
+# unfiltered store, so filter their items as well.
+change(home_list,
+       """                val resolvedApps = folderEntry.itemComponentKeys.mapNotNull { keyString ->
+                    val componentKey = ComponentKey.fromString(keyString) ?: return@mapNotNull null""",
+       """                val resolvedApps = folderEntry.itemComponentKeys.mapNotNull { keyString ->
+                    if (hideHomeAppsInDrawer && homeScreenApps.contains(keyString)) {
+                        return@mapNotNull null
+                    }
+                    val componentKey = ComponentKey.fromString(keyString) ?: return@mapNotNull null""")
+
+# Moving an icon back and forth does not change the installed app list.
+# Force a fresh drawer filter calculation whenever All Apps opens, picking
+# up desktop, dock and folder edits without any costly polling loop.
+change("src/com/android/launcher3/Launcher.java",
+       """        mPrevLauncherState = mStateManager.getCurrentStableState();
+        if (mPrevLauncherState != state && ALL_APPS.equals(state)""",
+       """        mPrevLauncherState = mStateManager.getCurrentStableState();
+        if (ALL_APPS.equals(state) && mPrevLauncherState != state && mAppsView != null) {
+            mAppsView.getPersonalAppList().onAppsUpdated();
+            mAppsView.getWorkAppList().onAppsUpdated();
+        }
+        if (mPrevLauncherState != state && ALL_APPS.equals(state)""")
+
+
 print("Ready to build: ./gradlew assembleLawnWithQuickstepPlayDebug")
 print("Expected package: app.huy.androidlauncher2")
