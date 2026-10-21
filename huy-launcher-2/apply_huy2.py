@@ -24,6 +24,24 @@ def change(path, old, new):
 layout = "src/com/android/launcher3/folder/ClippedFolderIconLayoutRule.java"
 organizer = "src/com/android/launcher3/folder/FolderGridOrganizer.java"
 
+# The CLOSED folder preview (glass background + all 3x3 mini-icons) is
+# 20% larger than the visible size of a normal app icon.  Apply it at the
+# DeviceProfile dimension rather than scaling FolderIcon View: labels,
+# hit targets, drag coordinates, widget layouts and bounce animations stay
+# in their original coordinate system.  Both workspace and dock folders
+# use this size, including after a device grid/icon-size change.
+change("src/com/android/launcher3/DeviceProfile.java",
+       "        folderIconSizePx = Math.round(iconSizePx * ICON_VISIBLE_AREA_FACTOR);",
+       "        folderIconSizePx = Math.round(iconSizePx * ICON_VISIBLE_AREA_FACTOR * 1.20f);")
+
+# Consistent 120% sizing for folders rendered in the All Apps list, too.
+# Normally Huy Launcher 2 has no app drawer, but this avoids an unexpected
+# downsize should All Apps ever be enabled again.
+change("src/com/android/launcher3/folder/PreviewBackground.java",
+       "            previewSize = Math.round(allAppsIconSize * ICON_VISIBLE_AREA_FACTOR);",
+       "            previewSize = Math.round(allAppsIconSize * ICON_VISIBLE_AREA_FACTOR * 1.20f);")
+
+
 change(layout,
        "public static final int MAX_NUM_ITEMS_IN_PREVIEW = 4;",
        "public static final int MAX_NUM_ITEMS_IN_PREVIEW = 9;")
