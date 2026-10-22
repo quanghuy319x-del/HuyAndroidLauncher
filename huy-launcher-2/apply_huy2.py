@@ -854,6 +854,85 @@ change("src/com/android/launcher3/Workspace.java",
 
     protected void setWallpaperDimension() {""")
 
+
+# "Hide app" in the long-press popup of every normal app-drawer icon.
+# Reuse the same hidden_apps preference as Settings > App drawer > Hidden apps;
+# do not remove the package or its home-screen shortcuts.
+change("lawnchair/src/app/lawnchair/allapps/LawnchairAlphabeticalAppsList.kt",
+       "import app.lawnchair.preferences2.PreferenceManager2",
+       """import app.lawnchair.preferences2.PreferenceManager2
+import app.lawnchair.preferences2.firstCached
+import kotlinx.coroutines.launch""")
+
+# Reuse already compiled Kotlin file rather than changing app module wiring.
+# Java can call this @JvmStatic method from SystemShortcut's click handler.
+drawer_hide_file = root / "lawnchair/src/app/lawnchair/allapps/LawnchairAlphabeticalAppsList.kt"
+drawer_hide_source = drawer_hide_file.read_text(encoding="utf-8")
+assert "object HuyDrawerHideAction" not in drawer_hide_source
+drawer_hide_file.write_text(drawer_hide_source + """
+
+/** User-triggered drawer hide. Apps and home-screen folders remain intact. */
+object HuyDrawerHideAction {
+    @JvmStatic
+    fun hideApp(launcher: com.android.launcher3.Launcher, item: ItemInfo) {
+        if (item.container != com.android.launcher3.LauncherSettings.Favorites.CONTAINER_ALL_APPS) return
+        val component = item.targetComponent ?: return
+        val key = ComponentKey(component, item.user).toString()
+        launcher.lifecycleScope.launch {
+            val prefs = PreferenceManager2.getInstance(launcher)
+            val hidden = prefs.hiddenApps.firstCached(prefs)
+            if (key !in hidden) {
+                prefs.hiddenApps.set(hidden + key)
+            }
+        }
+    }
+}
+""", encoding="utf-8")
+
+# A real SystemShortcut ensures "Hide app" appears alongside App info etc,
+# rather than replacing the native long-press menu or stealing touch events.
+change("src/com/android/launcher3/popup/SystemShortcut.java",
+       "    public static final Factory<ActivityContext> APP_INFO = AppInfo::new;",
+       """    public static final Factory<ActivityContext> HUY_HIDE_APP =
+            (context, itemInfo, originalView) -> {
+                if (itemInfo.container != LauncherSettings.Favorites.CONTAINER_ALL_APPS
+                        || itemInfo.itemType != LauncherSettings.Favorites.ITEM_TYPE_APPLICATION
+                        || itemInfo.getTargetComponent() == null) {
+                    return null;
+                }
+                return new HuyHideApp<>(context, itemInfo, originalView);
+            };
+
+    /** Hide just this app's drawer entry. Never uninstall or delete a shortcut. */
+    public static class HuyHideApp<T extends ActivityContext> extends SystemShortcut<T> {
+        public HuyHideApp(T target, ItemInfo itemInfo, View originalView) {
+            super(R.drawable.ic_block_no_shadow, R.string.hide_from_drawer,
+                    target, itemInfo, originalView, /* isCollapsible */ false);
+        }
+
+        @Override
+        public void onClick(View view) {
+            dismissTaskMenuView();
+            if (mTarget instanceof com.android.launcher3.Launcher launcher) {
+                app.lawnchair.allapps.HuyDrawerHideAction.hideApp(launcher, mItemInfo);
+            }
+        }
+    }
+
+    public static final Factory<ActivityContext> APP_INFO = AppInfo::new;""")
+
+change("src/com/android/launcher3/Launcher.java",
+       """    public Stream<SystemShortcut.Factory> getSupportedShortcuts(int container) {
+        if (enableLongPressRemoveShortcut()""",
+       """    public Stream<SystemShortcut.Factory> getSupportedShortcuts(int container) {
+        // Only the app drawer gains "Hide app"; desktop and dock retain the
+        // original Remove / App info / Widgets actions.
+        if (container == LauncherSettings.Favorites.CONTAINER_ALL_APPS) {
+            return Stream.of(APP_INFO, WIDGETS, INSTALL, SystemShortcut.HUY_HIDE_APP);
+        }
+        if (enableLongPressRemoveShortcut()""")
+
+
 # Restore after closing a folder without animation, including app launches.
 # Never leave wallpaper depth or a dark overlay stuck on the home screen.
 change(folder_source,
