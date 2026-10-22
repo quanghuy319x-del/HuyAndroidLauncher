@@ -508,7 +508,8 @@ change(folder_source,
     // draw widgets synchronously in the folder opening animation.
     private static Bitmap sHuyCachedBackdrop;
     private static long sHuyWallpaperStamp = -1L, sHuyCacheCreatedAt;
-    private static int sHuyCacheWidth, sHuyCacheHeight;
+    private static int sHuyCacheWidth, sHuyCacheHeight, sHuyCachePage = -1;
+    private static float sHuyCacheOffset = -1f;
     private static boolean sHuyWarmupScheduled;
 
     /**
@@ -552,11 +553,14 @@ change(folder_source,
         // during the touch event: folder popup should be instantaneous.
         File wallpaper = new File(launcher.getFilesDir(),
                 "huy_folder_wallpaper.image");
+        final float liveOffset = getHuyWallpaperOffset(launcher);
         mHuyHasBackdropSnapshot = sHuyCachedBackdrop != null
                 && !sHuyCachedBackdrop.isRecycled() && wallpaper.isFile()
                 && wallpaper.lastModified() == sHuyWallpaperStamp
                 && dragLayer.getWidth() == sHuyCacheWidth
-                && dragLayer.getHeight() == sHuyCacheHeight;
+                && dragLayer.getHeight() == sHuyCacheHeight
+                && launcher.getWorkspace().getCurrentPage() == sHuyCachePage
+                && Math.abs(liveOffset - sHuyCacheOffset) < 0.002f;
         if (mHuyHasBackdropSnapshot
                 && mHuyUniformFolderOverlay instanceof ImageView image) {
             image.setBackgroundColor(Color.TRANSPARENT);
@@ -569,8 +573,18 @@ change(folder_source,
         }
     }
 
+    /** Match the current page's wallpaper parallax rather than always using center crop. */
+    private float getHuyWallpaperOffset(Launcher launcher) {
+        try {
+            return Math.max(0f, Math.min(1f,
+                    launcher.getWorkspace().getWallpaperOffsetForCenterPage()));
+        } catch (Exception e) {
+            return 0.5f;
+        }
+    }
+
     /** Draw the full backdrop in an idle frame, never on a folder tap. */
-    private void scheduleHuyBackdropWarmup(Launcher launcher, long delayMillis) {
+    public void scheduleHuyBackdropWarmup(Launcher launcher, long delayMillis) {
         File wallpaper = new File(launcher.getFilesDir(),
                 "huy_folder_wallpaper.image");
         if (!wallpaper.isFile() || sHuyWarmupScheduled) {
@@ -581,6 +595,8 @@ change(folder_source,
                 && sHuyWallpaperStamp == wallpaper.lastModified()
                 && sHuyCacheWidth == layer.getWidth()
                 && sHuyCacheHeight == layer.getHeight()
+                && sHuyCachePage == launcher.getWorkspace().getCurrentPage()
+                && Math.abs(sHuyCacheOffset - getHuyWallpaperOffset(launcher)) < 0.002f
                 && System.currentTimeMillis() - sHuyCacheCreatedAt < 15000L) {
             return;
         }
@@ -639,21 +655,36 @@ change(folder_source,
                     w + overscan * 2, h + overscan * 2, Bitmap.Config.ARGB_8888);
             final Canvas canvas = new Canvas(screenshot);
             final Paint p = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
-            // Use the original center crop for the visible screen, but extend
-            // pixels beyond its bounds with CLAMP. This fills blur sampling
-            // margins with actual wallpaper instead of transparent black.
-            final float scale = Math.max(w / (float) source.getWidth(),
-                    h / (float) source.getHeight());
+            // The OLD implementation always used a fixed CENTER_CROP.
+            // Android can render the actual static wallpaper with extra
+            // horizontal travel (parallax) and a different crop. Match the
+            // system wallpaper's desired dimensions, capped at 22% extra
+            // width to avoid excessive zoom on portrait photos. Keep the
+            // same visible vertical center as the system wallpaper.
+            final android.app.WallpaperManager wm =
+                    android.app.WallpaperManager.getInstance(launcher);
+            final float desiredWidth = wm.getDesiredMinimumWidth();
+            final float wallpaperSpan = Math.min(w * 1.22f,
+                    Math.max((float) w, desiredWidth));
+            final float scale = Math.max(
+                    Math.max(w / (float) source.getWidth(),
+                             h / (float) source.getHeight()),
+                    wallpaperSpan / (float) source.getWidth());
             final float sw = source.getWidth() * scale;
             final float sh = source.getHeight() * scale;
+            final float currentWallpaperOffset = getHuyWallpaperOffset(launcher);
             final android.graphics.BitmapShader wallpaperShader =
                     new android.graphics.BitmapShader(source,
                             Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
             final android.graphics.Matrix wallpaperMatrix =
                     new android.graphics.Matrix();
             wallpaperMatrix.setScale(scale, scale);
+            // Apply the page-dependent horizontal wallpaper offset. This
+            // prevents the blurred copy jumping to the center when a folder
+            // opens on page 2, 3, etc.
             wallpaperMatrix.postTranslate(
-                    overscan + (w - sw) / 2f, overscan + (h - sh) / 2f);
+                    overscan - Math.max(0f, sw - w) * currentWallpaperOffset,
+                    overscan + (h - sh) / 2f);
             wallpaperShader.setLocalMatrix(wallpaperMatrix);
             p.setShader(wallpaperShader);
             canvas.drawRect(0f, 0f,
@@ -700,6 +731,8 @@ change(folder_source,
             sHuyWallpaperStamp = imageFile.lastModified();
             sHuyCacheWidth = w;
             sHuyCacheHeight = h;
+            sHuyCachePage = launcher.getWorkspace().getCurrentPage();
+            sHuyCacheOffset = currentWallpaperOffset;
             sHuyCacheCreatedAt = System.currentTimeMillis();
             mHuyBackdropBitmap = screenshot;
             screenshot = null;
@@ -792,6 +825,34 @@ change(folder_source,
             scheduleHuyBackdropWarmup(launcher, 450);
         }
     }""")
+
+
+# Refresh the cached snapshot after scrolling between home pages, while
+# the launcher is idle, not during the folder-open touch animation.
+# Without this, a folder opened on page 2 could display page 1's
+# wallpaper crop and old workspace contents (the reported mismatch).
+change("src/com/android/launcher3/Workspace.java",
+       """            updateStatusbarClock();
+        }
+    }
+
+    protected void setWallpaperDimension() {""",
+       """            updateStatusbarClock();
+            // Rebuild the folder backdrop on the newly selected page.
+            postDelayed(() -> mapOverItems((info, view) -> {
+                if (view instanceof com.android.launcher3.folder.FolderIcon icon) {
+                    com.android.launcher3.folder.Folder folder = icon.getFolder();
+                    if (folder != null) {
+                        folder.scheduleHuyBackdropWarmup(mLauncher, 0);
+                        return true;
+                    }
+                }
+                return false;
+            }), 220L);
+        }
+    }
+
+    protected void setWallpaperDimension() {""")
 
 # Restore after closing a folder without animation, including app launches.
 # Never leave wallpaper depth or a dark overlay stuck on the home screen.
