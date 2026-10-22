@@ -202,58 +202,97 @@ for item_count, expected_rows in {1: [1], 2: [2], 3: [3], 4: [3, 1],
         actual_rows.extend(len(page[i:i+3]) for i in range(0, len(page), 3))
     assert actual_rows == expected_rows, (item_count, actual_rows)
 
-# Android 14 does not grant ordinary apps access to the current wallpaper.
-# Add an explicit one-time user-selected wallpaper chooser in Folder Settings.
-# Content is copied into app-private storage using ACTION_OPEN_DOCUMENT,
-# so no MANAGE_EXTERNAL_STORAGE or READ_WALLPAPER_INTERNAL permission is needed.
-change("lawnchair/src/app/lawnchair/ui/preferences/destinations/FolderPreferences.kt",
-       "import androidx.compose.runtime.Composable",
-       """import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.runtime.Composable
+# One wallpaper chooser for BOTH the Android home screen and folder blur.
+# Move the old picker from Folder Settings to Home Screen > Wallpaper.
+# Keep the same private image filename used by Folder.java's blur cache.
+# SET_WALLPAPER is already declared in AndroidManifest-common.xml.
+home_settings = "lawnchair/src/app/lawnchair/ui/preferences/destinations/HomeScreenPreferences.kt"
+change(home_settings,
+       "import android.content.Context",
+       """import android.app.WallpaperManager
 import android.content.Context
-import android.widget.Toast""")
-change("lawnchair/src/app/lawnchair/ui/preferences/destinations/FolderPreferences.kt",
-       "import app.lawnchair.ui.preferences.components.controls.SliderPreference",
-       """import app.lawnchair.ui.preferences.components.controls.ClickablePreference
-import app.lawnchair.ui.preferences.components.controls.SliderPreference""")
-change("lawnchair/src/app/lawnchair/ui/preferences/destinations/FolderPreferences.kt",
-       "        val context = LocalContext.current",
-       """        val context = LocalContext.current
-        val backdropPicker = rememberLauncherForActivityResult(
-            ActivityResultContracts.OpenDocument()
-        ) { uri ->
-            if (uri != null) {
+import android.graphics.BitmapFactory
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext""")
+
+change(home_settings,
+       """    val context = LocalContext.current
+    PreferenceLayout(""",
+       """    val context = LocalContext.current
+    val wallpaperPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val pending = File(context.filesDir, "huy_folder_wallpaper.pending")
                 try {
-                    val input = context.contentResolver.openInputStream(uri)
-                        ?: error("Cannot read image")
-                    input.use { src ->
-                        context.openFileOutput("huy_folder_wallpaper.image", Context.MODE_PRIVATE).use { dst ->
-                            src.copyTo(dst)
+                    withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(uri)?.use { src ->
+                            pending.outputStream().use { dst -> src.copyTo(dst) }
+                        } ?: error("Cannot read selected image")
+
+                        // Do not replace a valid wallpaper/blur image with an
+                        // unsupported file or an incomplete document.
+                        val info = BitmapFactory.Options().apply {
+                            inJustDecodeBounds = true
                         }
+                        BitmapFactory.decodeFile(pending.absolutePath, info)
+                        if (pending.length() == 0L || info.outWidth <= 0 || info.outHeight <= 0) {
+                            error("Invalid image; please choose another photo")
+                        }
+
+                        // Set only the HOME wallpaper; do not explicitly
+                        // overwrite a separately configured lock-screen image.
+                        pending.inputStream().use { src ->
+                            WallpaperManager.getInstance(context).setStream(
+                                src, null, true, WallpaperManager.FLAG_SYSTEM
+                            )
+                        }
+
+                        // Commit the same image to Folder.java's existing
+                        // private backdrop store only after wallpaper succeeds.
+                        Files.move(
+                            pending.toPath(),
+                            File(context.filesDir, "huy_folder_wallpaper.image").toPath(),
+                            StandardCopyOption.REPLACE_EXISTING
+                        )
                     }
-                    Toast.makeText(context, "Blur wallpaper saved. Open a folder to test.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                        context, "Home wallpaper and folder blur image updated", Toast.LENGTH_LONG
+                    ).show()
                 } catch (e: Exception) {
-                    Toast.makeText(context, "Cannot use this image: " + e.message, Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                        context, "Could not set wallpaper: " + e.message, Toast.LENGTH_LONG
+                    ).show()
+                } finally {
+                    pending.delete()
                 }
             }
-        }""")
-change("lawnchair/src/app/lawnchair/ui/preferences/destinations/FolderPreferences.kt",
-       """        PreferenceGroup(heading = stringResource(id = R.string.grid)) {""",
-       """        PreferenceGroup(heading = "Real folder backdrop blur") {
+        }
+    }
+    PreferenceLayout(""")
+
+change(home_settings,
+       """        PreferenceGroup(heading = stringResource(id = R.string.wallpaper)) {
+            SwitchPreference(""",
+       """        PreferenceGroup(heading = stringResource(id = R.string.wallpaper)) {
             ClickablePreference(
-                label = "Choose the image used as your wallpaper",
-                onClick = { backdropPicker.launch(arrayOf("image/*")) },
+                label = "Choose wallpaper",
+                onClick = { wallpaperPicker.launch(arrayOf("image/*")) },
             )
             ClickablePreference(
-                label = "Clear custom blur wallpaper",
+                label = "Clear custom folder blur image",
                 onClick = {
                     context.deleteFile("huy_folder_wallpaper.image")
-                    Toast.makeText(context, "Custom blur wallpaper cleared", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Custom folder blur image cleared", Toast.LENGTH_SHORT).show()
                 },
             )
-        }
-        PreferenceGroup(heading = stringResource(id = R.string.grid)) {""")
+            SwitchPreference(""")
 
 # Match the successful Huy Launcher 1 privacy fix: no notification listener,
 # accessibility service, or ACCESS_RESTRICTED_SETTINGS in the merged manifest.
