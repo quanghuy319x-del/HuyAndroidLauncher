@@ -1,1 +1,4 @@
-<resources><string name="app_name">Minute Timer</string></resources>
+<resources>
+    <string name="app_name">Minute Timer</string>
+    <string name="widget_description">One-minute countdown timer</string>
+</resources>
